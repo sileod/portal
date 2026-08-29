@@ -26,5 +26,6 @@ type Session struct {
 
 type SessionList struct {
 	HostCount int       `json:"host_count"`
+	Hosts     []string  `json:"hosts"`
 	Sessions  []Session `json:"sessions"`
 }
