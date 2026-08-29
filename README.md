@@ -24,12 +24,12 @@ curl -fsSL https://raw.githubusercontent.com/sileod/portal/main/install.sh | sh
 
 The normal install downloads a prebuilt Linux/macOS amd64/arm64 binary. **Go is not a Portal user dependency and the installer never installs Go.**
 
-The installer sets up Tailscale Funnel by default. Only the Portal host needs Tailscale. Any machine or phone with a web browser can open the resulting public HTTPS URL.
+The installer sets up Tailscale Funnel by default. Only the Portal hub host needs Tailscale. Any machine or phone with a web browser can open the resulting public HTTPS URL, and additional terminal hosts connect outbound without needing Tailscale.
 
-If the host is not yet connected to Tailscale, setup offers:
+If the hub host is not yet connected to Tailscale, setup offers:
 
 ```text
-Tailscale is not connected on this host.
+Tailscale is not connected on this hub host.
   1) Sign in in your browser (recommended)
   2) Use a Tailscale auth key
 Choice [1]:
@@ -56,6 +56,50 @@ portal gpu -- nvtop
 ```
 
 Every Portal-managed terminal appears at the same central URL. With multiple hosts, tabs become `host:session`.
+
+## Web UI
+
+The UI stays deliberately terminal-shaped rather than becoming a dashboard.
+
+Each tab supports:
+
+- open/attach to the persistent tmux terminal
+- rename the underlying tmux session
+- kill the underlying tmux session with an explicit confirmation
+- schedule arbitrary one-line text plus Enter after a delay
+- optionally repeat that scheduled send 1–100 times at a chosen interval
+
+The `+` button creates a new Portal-managed tmux session on a connected host, optionally starting a command.
+
+The settings button contains:
+
+- horizontal or vertical tabs
+- light, dark, or system browser theme
+- tmux status-bar background color, applied to Portal-managed sessions across connected hosts
+
+The scheduler is harness-agnostic. For example, a rate-limited terminal can be told to type `proceed` after `5h`, or send it three times at ten-minute intervals. Scheduled sends are launched by the host's tmux server and therefore survive browser disconnects and Portal daemon/hub restarts. They do not survive the tmux server itself being stopped.
+
+Other UI behavior:
+
+- plain session names on one host
+- `host:session` tab labels when multiple hosts are online
+- online host count in the chrome
+- xterm.js rendering for TUIs, mouse input, resize, paste, and alternate-screen applications
+- browser disconnect/reconnect without losing the underlying tmux session
+
+No projects, agents, SSH connection manager, IDE, or workflow model is imposed.
+
+## Updating
+
+Rerun the installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sileod/portal/main/install.sh | sh
+```
+
+An existing installation is detected automatically. Portal replaces the binary and restarts Portal's daemon; on a hub machine it also restarts the web hub. **It never stops the tmux server or kills Portal-managed tmux sessions.** Existing commands, shells, agents, and tmux-backed scheduled sends keep running while browser connections briefly reconnect.
+
+On Linux, the updater can recover the running hub's Portal password from that same user's process environment for the restart. On platforms where it cannot, it asks for the Portal password once.
 
 ## Explicit setup
 
@@ -136,20 +180,6 @@ tmux attach -t codex
 ```
 
 The hub authenticates browsers and hosts and routes terminal streams. Terminal hosts never need an inbound port. Viewing browsers do not need Tailscale.
-
-## Web UI
-
-The UI is intentionally only terminals and tabs:
-
-- horizontal or vertical tabs, toggled in place
-- light, dark, or system theme
-- plain session names on one host
-- `host:session` tab labels when multiple hosts are online
-- online host count in the chrome
-- xterm.js terminal rendering for TUIs, mouse input, resize, paste, and alternate-screen applications
-- browser disconnect/reconnect without losing the underlying tmux session
-
-No projects, agents, SSH connection manager, IDE, or workflow model is imposed.
 
 ## Authentication and transport
 
