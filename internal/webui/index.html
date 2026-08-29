@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Portal</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+<style>
+:root{color-scheme:light dark;--bg:#fff;--fg:#111;--muted:#777;--line:#ddd;--tab:#f5f5f5;--active:#fff}
+:root[data-theme=dark]{color-scheme:dark;--bg:#111;--fg:#eee;--muted:#888;--line:#333;--tab:#181818;--active:#111}
+:root[data-theme=light]{color-scheme:light;--bg:#fff;--fg:#111;--muted:#777;--line:#ddd;--tab:#f5f5f5;--active:#fff}
+*{box-sizing:border-box}html,body,#app{margin:0;width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--fg);font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+#app{display:grid;grid-template-rows:40px 1fr}.bar{display:flex;align-items:stretch;border-bottom:1px solid var(--line);background:var(--tab);min-width:0}.tabs{display:flex;flex:1;min-width:0;overflow:auto;scrollbar-width:none}.tabs::-webkit-scrollbar{display:none}.tab,.tool{border:0;border-right:1px solid var(--line);background:transparent;color:var(--muted);font:inherit;padding:0 13px;white-space:nowrap;cursor:pointer}.tab:hover,.tool:hover{color:var(--fg)}.tab.active{background:var(--active);color:var(--fg)}.tools{display:flex;margin-left:auto}.hostcount{display:flex;align-items:center;padding:0 10px;color:var(--muted);white-space:nowrap}.stage{position:relative;min-width:0;min-height:0;background:var(--bg)}.term{position:absolute;inset:0;padding:6px;display:none}.term.active{display:block}.empty{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted)}
+#app.vertical{grid-template-columns:190px 1fr;grid-template-rows:1fr}.vertical .bar{grid-column:1;grid-row:1;flex-direction:column;border-right:1px solid var(--line);border-bottom:0;min-height:0}.vertical .tabs{flex-direction:column;overflow:auto;flex:1}.vertical .tab{height:38px;text-align:left;border-right:0;border-bottom:1px solid var(--line)}.vertical .tools{margin:0;border-top:1px solid var(--line)}.vertical .tool{height:38px;flex:1}.vertical .hostcount{height:38px}.vertical .stage{grid-column:2;grid-row:1}
+.xterm,.xterm-viewport{height:100%!important}.xterm-viewport{scrollbar-width:thin}
+@media(max-width:650px){#app.vertical{grid-template-columns:132px 1fr}.tab,.tool{padding:0 9px}.hostcount{display:none}}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="bar">
+    <div class="tabs" id="tabs"></div>
+    <div class="hostcount" id="hostcount"></div>
+    <div class="tools"><button class="tool" id="orientation" title="Toggle tab orientation">↕</button><button class="tool" id="theme" title="Theme">◐</button></div>
+  </div>
+  <main class="stage" id="stage"><div class="empty" id="empty">no terminals</div></main>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+<script>
+const app=document.querySelector('#app'),tabsEl=document.querySelector('#tabs'),stage=document.querySelector('#stage'),empty=document.querySelector('#empty'),hostcount=document.querySelector('#hostcount')
+const terms=new Map();let active=null,hostCount=0
+const themes={dark:{background:'#111111',foreground:'#eeeeee',cursor:'#eeeeee'},light:{background:'#ffffff',foreground:'#111111',cursor:'#111111'}}
+let orientation=localStorage.portalOrientation||'horizontal',theme=localStorage.portalTheme||'system'
+function dark(){return theme==='dark'||(theme==='system'&&matchMedia('(prefers-color-scheme: dark)').matches)}
+function applyPrefs(){app.classList.toggle('vertical',orientation==='vertical');document.documentElement.dataset.theme=theme==='system'?'':theme;document.querySelector('#orientation').textContent=orientation==='vertical'?'↔':'↕';document.querySelector('#theme').textContent=theme==='light'?'☀':theme==='dark'?'●':'◐';for(const x of terms.values())x.term.options.theme=dark()?themes.dark:themes.light;requestAnimationFrame(fitActive)}
+function key(s){return s.host+'\0'+s.session}
+function label(s){return hostCount>1?s.host+':'+s.session:s.session}
+function wsURL(path){return (location.protocol==='https:'?'wss://':'ws://')+location.host+path}
+function fitActive(){const x=terms.get(active);if(x){x.fit.fit();sendResize(x)}}
+function sendResize(x){if(x.ws.readyState===WebSocket.OPEN)x.ws.send(JSON.stringify({type:'resize',cols:x.term.cols,rows:x.term.rows}))}
+function openTerm(s){const k=key(s);if(terms.has(k))return terms.get(k);const el=document.createElement('div');el.className='term';stage.appendChild(el);const term=new Terminal({cursorBlink:true,fontFamily:'ui-monospace,SFMono-Regular,Menlo,Consolas,monospace',fontSize:14,scrollback:10000,theme:dark()?themes.dark:themes.light});const fit=new FitAddon.FitAddon();term.loadAddon(fit);term.open(el);const ws=new WebSocket(wsURL('/api/terminal?host='+encodeURIComponent(s.host)+'&session='+encodeURIComponent(s.session)));ws.binaryType='arraybuffer';const x={s,el,term,fit,ws};terms.set(k,x);term.onData(data=>{if(ws.readyState===WebSocket.OPEN)ws.send(new TextEncoder().encode(data))});term.onResize(()=>sendResize(x));ws.onopen=()=>{fit.fit();sendResize(x)};ws.onmessage=e=>{if(typeof e.data==='string')term.write(e.data);else term.write(new Uint8Array(e.data))};ws.onclose=()=>term.write('\r\n\x1b[90m[disconnected]\x1b[0m\r\n');return x}
+function activate(k){const changed=active!==k,old=terms.get(active);if(changed&&old)old.el.classList.remove('active');active=k;document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.key===k));const x=terms.get(k);if(x){x.el.classList.add('active');empty.style.display='none';if(changed)requestAnimationFrame(()=>{x.fit.fit();x.term.focus()})}else empty.style.display='grid'}
+function render(list){const current=new Set(list.map(key));for(const [k,x] of terms)if(!current.has(k)){x.ws.close();x.term.dispose();x.el.remove();terms.delete(k);if(active===k)active=null}tabsEl.replaceChildren();for(const s of list){const k=key(s),b=document.createElement('button');b.className='tab';b.dataset.key=k;b.textContent=label(s);b.title=s.host+' / '+s.session;b.onclick=()=>{openTerm(s);activate(k)};tabsEl.appendChild(b)}if(!active&&list.length){const s=list[0],k=key(s);openTerm(s);activate(k)}else activate(active);empty.style.display=list.length?'none':'grid'}
+async function refresh(){try{const r=await fetch('/api/sessions',{cache:'no-store'});if(r.status===401){location.reload();return}if(!r.ok)return;const data=await r.json();hostCount=data.host_count;hostcount.textContent=hostCount+(hostCount===1?' host':' hosts');render(data.sessions)}catch{}}
+document.querySelector('#orientation').onclick=()=>{orientation=orientation==='vertical'?'horizontal':'vertical';localStorage.portalOrientation=orientation;applyPrefs()}
+document.querySelector('#theme').onclick=()=>{theme=theme==='system'?'light':theme==='light'?'dark':'system';localStorage.portalTheme=theme;applyPrefs()}
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{if(theme==='system')applyPrefs()});addEventListener('resize',fitActive);applyPrefs();refresh();setInterval(refresh,1500)
+</script>
+</body>
+</html>
