@@ -121,7 +121,25 @@ func exposeCloudflare(args []string) error {
 }
 
 func tailscaleUp(key string) error {
-	args := []string{"tailscale", "up", "--auth-key=" + key}
+	keyFile, err := os.CreateTemp("", "portal-tailscale-key-*")
+	if err != nil {
+		return err
+	}
+	path := keyFile.Name()
+	defer os.Remove(path)
+	if err := keyFile.Chmod(0600); err != nil {
+		keyFile.Close()
+		return err
+	}
+	if _, err := keyFile.WriteString(key + "\n"); err != nil {
+		keyFile.Close()
+		return err
+	}
+	if err := keyFile.Close(); err != nil {
+		return err
+	}
+
+	args := []string{"tailscale", "up", "--auth-key=file:" + path}
 	var cmd *exec.Cmd
 	if os.Geteuid() == 0 {
 		cmd = exec.Command(args[0], args[1:]...)
