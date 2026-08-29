@@ -1,18 +1,18 @@
 package hub
 
 import (
-	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +24,12 @@ import (
 )
 
 const controlCapability = "controls-v1"
+
+const (
+	browserSessionTTL = 30 * 24 * time.Hour
+	authAttemptTTL     = 24 * time.Hour
+	maxAuthDelay       = 5 * time.Minute
+)
 
 type agentConn struct {
 	host         string
@@ -46,28 +52,35 @@ type pendingAction struct {
 	ch   chan protocol.Message
 }
 
-type Server struct {
-	password       string
-	agentToken     string
-	browserSession string
-	mu             sync.RWMutex
-	agents         map[string]*agentConn
-	routes         map[string]*browserConn
-	pending        map[string]pendingAction
-	upgrader       websocket.Upgrader
+type authAttempt struct {
+	failures int
+	next     time.Time
+	last     time.Time
 }
 
-func New(password string) *Server {
-	mac := hmac.New(sha256.New, []byte(password))
-	mac.Write([]byte("portal-browser-session-v1"))
+type Server struct {
+	passwordHash string
+	agentToken   string
+	mu           sync.RWMutex
+	agents       map[string]*agentConn
+	routes       map[string]*browserConn
+	pending      map[string]pendingAction
+	authMu       sync.Mutex
+	sessions     map[string]time.Time
+	attempts     map[string]authAttempt
+	upgrader     websocket.Upgrader
+}
+
+func New(passwordHash, agentToken string) *Server {
 	return &Server{
-		password:       password,
-		agentToken:     auth.AgentToken(password),
-		browserSession: hex.EncodeToString(mac.Sum(nil)),
-		agents:         map[string]*agentConn{},
-		routes:         map[string]*browserConn{},
-		pending:        map[string]pendingAction{},
-		upgrader:       websocket.Upgrader{CheckOrigin: sameOrigin},
+		passwordHash: passwordHash,
+		agentToken:   agentToken,
+		agents:       map[string]*agentConn{},
+		routes:       map[string]*browserConn{},
+		pending:      map[string]pendingAction{},
+		sessions:     map[string]time.Time{},
+		attempts:     map[string]authAttempt{},
+		upgrader:     websocket.Upgrader{CheckOrigin: sameOrigin},
 	}
 }
 
@@ -76,6 +89,7 @@ func (s *Server) Run(addr string) error {
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/login", s.handleLogin)
 	mux.HandleFunc("/logout", s.handleLogout)
+	mux.HandleFunc("/api/enroll", s.handleEnroll)
 	mux.HandleFunc("/api/sessions", s.requireBrowser(s.handleSessions))
 	mux.HandleFunc("/api/session", s.requireBrowser(s.handleSessionAction))
 	mux.HandleFunc("/api/terminal", s.requireBrowser(s.handleTerminal))
@@ -106,7 +120,18 @@ func sameOrigin(r *http.Request) bool {
 
 func (s *Server) browserOK(r *http.Request) bool {
 	c, err := r.Cookie("portal_session")
-	return err == nil && constantEqual(c.Value, s.browserSession)
+	if err != nil || c.Value == "" {
+		return false
+	}
+	now := time.Now()
+	s.authMu.Lock()
+	expires, ok := s.sessions[c.Value]
+	if ok && !expires.After(now) {
+		delete(s.sessions, c.Value)
+		ok = false
+	}
+	s.authMu.Unlock()
+	return ok
 }
 
 func (s *Server) requireBrowser(next http.HandlerFunc) http.HandlerFunc {
@@ -134,13 +159,29 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
-		if err := r.ParseForm(); err != nil || !constantEqual(r.FormValue("password"), s.password) {
+		ip := clientIP(r)
+		if wait := s.authWait(ip); wait > 0 {
+			writeThrottle(w, wait, true)
+			return
+		}
+		if err := r.ParseForm(); err != nil || !auth.VerifyPassword(s.passwordHash, r.FormValue("password")) {
+			wait := s.authFailure(ip)
+			w.Header().Set("Retry-After", strconv.Itoa(retrySeconds(wait)))
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusUnauthorized)
 			fmt.Fprint(w, loginPage("wrong password"))
 			return
 		}
-		http.SetCookie(w, &http.Cookie{Name: "portal_session", Value: s.browserSession, Path: "/", HttpOnly: true, Secure: isSecure(r), SameSite: http.SameSiteStrictMode, MaxAge: 30 * 24 * 3600})
+		s.authSuccess(ip)
+		token, err := auth.RandomToken()
+		if err != nil {
+			http.Error(w, "could not create session", http.StatusInternalServerError)
+			return
+		}
+		s.authMu.Lock()
+		s.sessions[token] = time.Now().Add(browserSessionTTL)
+		s.authMu.Unlock()
+		http.SetCookie(w, &http.Cookie{Name: "portal_session", Value: token, Path: "/", HttpOnly: true, Secure: isSecure(r), SameSite: http.SameSiteStrictMode, MaxAge: int(browserSessionTTL / time.Second)})
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
@@ -152,7 +193,35 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, loginPage(""))
 }
 
+func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	ip := clientIP(r)
+	if wait := s.authWait(ip); wait > 0 {
+		writeThrottle(w, wait, false)
+		return
+	}
+	if err := r.ParseForm(); err != nil || !auth.VerifyPassword(s.passwordHash, r.FormValue("password")) {
+		wait := s.authFailure(ip)
+		w.Header().Set("Retry-After", strconv.Itoa(retrySeconds(wait)))
+		http.Error(w, "wrong password", http.StatusUnauthorized)
+		return
+	}
+	s.authSuccess(ip)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(struct {
+		Token string `json:"token"`
+	}{Token: s.agentToken})
+}
+
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie("portal_session"); err == nil && c.Value != "" {
+		s.authMu.Lock()
+		delete(s.sessions, c.Value)
+		s.authMu.Unlock()
+	}
 	http.SetCookie(w, &http.Cookie{Name: "portal_session", Value: "", Path: "/", HttpOnly: true, Secure: isSecure(r), SameSite: http.SameSiteStrictMode, MaxAge: -1})
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
@@ -163,6 +232,99 @@ func loginPage(errText string) string {
 		errHTML = `<p class="error">` + errText + `</p>`
 	}
 	return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#111111"><link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'><text x='60' y='86' text-anchor='middle' font-size='78'>🌀</text></svg>"><title>Portal</title><style>:root{color-scheme:light dark}*{box-sizing:border-box}body{margin:0;height:100vh;display:grid;place-items:center;font:14px ui-monospace,SFMono-Regular,Menlo,monospace}form{width:min(360px,calc(100vw - 40px))}h1{font-size:20px}input,button{width:100%;padding:12px;font:inherit;margin-top:8px}button{cursor:pointer}.error{color:#c33}</style></head><body><form method="post"><h1>🌀 Portal</h1><input name="password" type="password" autocomplete="current-password" autofocus placeholder="password"><button>Enter</button>` + errHTML + `</form></body></html>`
+}
+
+func (s *Server) authWait(ip string) time.Duration {
+	now := time.Now()
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
+	s.pruneAttemptsLocked(now)
+	a, ok := s.attempts[ip]
+	if !ok || !a.next.After(now) {
+		return 0
+	}
+	return a.next.Sub(now)
+}
+
+func (s *Server) authFailure(ip string) time.Duration {
+	now := time.Now()
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
+	s.pruneAttemptsLocked(now)
+	a := s.attempts[ip]
+	a.failures++
+	shift := a.failures - 1
+	if shift > 8 {
+		shift = 8
+	}
+	delay := time.Second * time.Duration(1<<shift)
+	if delay > maxAuthDelay {
+		delay = maxAuthDelay
+	}
+	a.next = now.Add(delay)
+	a.last = now
+	s.attempts[ip] = a
+	return delay
+}
+
+func (s *Server) authSuccess(ip string) {
+	s.authMu.Lock()
+	delete(s.attempts, ip)
+	s.authMu.Unlock()
+}
+
+func (s *Server) pruneAttemptsLocked(now time.Time) {
+	if len(s.attempts) < 1024 {
+		return
+	}
+	for ip, a := range s.attempts {
+		if now.Sub(a.last) > authAttemptTTL {
+			delete(s.attempts, ip)
+		}
+	}
+}
+
+func writeThrottle(w http.ResponseWriter, wait time.Duration, html bool) {
+	seconds := retrySeconds(wait)
+	w.Header().Set("Retry-After", strconv.Itoa(seconds))
+	if html {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusTooManyRequests)
+		fmt.Fprint(w, loginPage(fmt.Sprintf("too many attempts; retry in %ds", seconds)))
+		return
+	}
+	http.Error(w, fmt.Sprintf("too many attempts; retry in %ds", seconds), http.StatusTooManyRequests)
+}
+
+func retrySeconds(wait time.Duration) int {
+	seconds := int((wait + time.Second - 1) / time.Second)
+	if seconds < 1 {
+		return 1
+	}
+	return seconds
+}
+
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	remote := net.ParseIP(strings.TrimSpace(host))
+	if remote != nil && remote.IsLoopback() {
+		for _, header := range []string{"CF-Connecting-IP", "X-Forwarded-For"} {
+			value := strings.TrimSpace(r.Header.Get(header))
+			if header == "X-Forwarded-For" {
+				value = strings.TrimSpace(strings.Split(value, ",")[0])
+			}
+			if ip := net.ParseIP(value); ip != nil {
+				return ip.String()
+			}
+		}
+	}
+	if remote != nil {
+		return remote.String()
+	}
+	return host
 }
 
 func isSecure(r *http.Request) bool {
