@@ -30,6 +30,8 @@ type agentConn struct {
 	ws           *websocket.Conn
 	writeMu      sync.Mutex
 	sessions     []string
+	sessionInfos []protocol.Session
+	schedules    []protocol.Schedule
 	capabilities []string
 }
 
@@ -160,7 +162,7 @@ func loginPage(errText string) string {
 	if errText != "" {
 		errHTML = `<p class="error">` + errText + `</p>`
 	}
-	return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#111111"><link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌀</text></svg>"><title>Portal</title><style>:root{color-scheme:light dark}*{box-sizing:border-box}body{margin:0;height:100vh;display:grid;place-items:center;font:14px ui-monospace,SFMono-Regular,Menlo,monospace}form{width:min(360px,calc(100vw - 40px))}h1{font-size:20px}input,button{width:100%;padding:12px;font:inherit;margin-top:8px}button{cursor:pointer}.error{color:#c33}</style></head><body><form method="post"><h1>🌀 Portal</h1><input name="password" type="password" autocomplete="current-password" autofocus placeholder="password"><button>Enter</button>` + errHTML + `</form></body></html>`
+	return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#111111"><link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'><text x='60' y='86' text-anchor='middle' font-size='78'>🌀</text></svg>"><title>Portal</title><style>:root{color-scheme:light dark}*{box-sizing:border-box}body{margin:0;height:100vh;display:grid;place-items:center;font:14px ui-monospace,SFMono-Regular,Menlo,monospace}form{width:min(360px,calc(100vw - 40px))}h1{font-size:20px}input,button{width:100%;padding:12px;font:inherit;margin-top:8px}button{cursor:pointer}.error{color:#c33}</style></head><body><form method="post"><h1>🌀 Portal</h1><input name="password" type="password" autocomplete="current-password" autofocus placeholder="password"><button>Enter</button>` + errHTML + `</form></body></html>`
 }
 
 func isSecure(r *http.Request) bool {
@@ -186,11 +188,23 @@ func bearerToken(r *http.Request) (string, bool) {
 func (s *Server) handleSessions(w http.ResponseWriter, _ *http.Request) {
 	s.mu.RLock()
 	list := make([]protocol.Session, 0)
+	schedules := make([]protocol.Schedule, 0)
 	hosts := make([]string, 0, len(s.agents))
 	for host, a := range s.agents {
 		hosts = append(hosts, host)
-		for _, session := range a.sessions {
-			list = append(list, protocol.Session{Host: host, Session: session})
+		if len(a.sessionInfos) > 0 {
+			for _, session := range a.sessionInfos {
+				session.Host = host
+				list = append(list, session)
+			}
+		} else {
+			for _, session := range a.sessions {
+				list = append(list, protocol.Session{Host: host, Session: session})
+			}
+		}
+		for _, schedule := range a.schedules {
+			schedule.Host = host
+			schedules = append(schedules, schedule)
 		}
 	}
 	hostCount := len(s.agents)
@@ -202,8 +216,14 @@ func (s *Server) handleSessions(w http.ResponseWriter, _ *http.Request) {
 		}
 		return list[i].Host < list[j].Host
 	})
+	sort.Slice(schedules, func(i, j int) bool {
+		if schedules[i].FirstAt == schedules[j].FirstAt {
+			return schedules[i].ID < schedules[j].ID
+		}
+		return schedules[i].FirstAt < schedules[j].FirstAt
+	})
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(protocol.SessionList{HostCount: hostCount, Hosts: hosts, Sessions: list})
+	json.NewEncoder(w).Encode(protocol.SessionList{HostCount: hostCount, Hosts: hosts, Sessions: list, Schedules: schedules})
 }
 
 type sessionActionRequest struct {
@@ -414,6 +434,12 @@ func hasCapability(a *agentConn, capability string) bool {
 	return containsString(a.capabilities, capability)
 }
 
+func applyAgentSnapshot(a *agentConn, m protocol.Message) {
+	a.sessions = append([]string(nil), m.Sessions...)
+	a.sessionInfos = append([]protocol.Session(nil), m.SessionInfos...)
+	a.schedules = append([]protocol.Schedule(nil), m.Schedules...)
+}
+
 func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 	token, ok := bearerToken(r)
 	if !ok || !constantEqual(token, s.agentToken) {
@@ -429,7 +455,8 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 	if err := ws.ReadJSON(&hello); err != nil || hello.Type != "hello" || hello.Host == "" {
 		return
 	}
-	a := &agentConn{host: hello.Host, ws: ws, sessions: hello.Sessions, capabilities: append([]string(nil), hello.Capabilities...)}
+	a := &agentConn{host: hello.Host, ws: ws, capabilities: append([]string(nil), hello.Capabilities...)}
+	applyAgentSnapshot(a, hello)
 	s.mu.Lock()
 	old := s.agents[a.host]
 	s.agents[a.host] = a
@@ -448,7 +475,7 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 		case "sessions":
 			s.mu.Lock()
 			if s.agents[a.host] == a {
-				a.sessions = append([]string(nil), m.Sessions...)
+				applyAgentSnapshot(a, m)
 			}
 			s.mu.Unlock()
 		case "action_result":
