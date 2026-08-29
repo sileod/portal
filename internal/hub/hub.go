@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/sileod/portal/internal/auth"
 	"github.com/sileod/portal/internal/protocol"
 	"github.com/sileod/portal/internal/webui"
 )
@@ -36,7 +37,8 @@ type browserConn struct {
 }
 
 type Server struct {
-	token          string
+	password       string
+	agentToken     string
 	browserSession string
 	mu             sync.RWMutex
 	agents         map[string]*agentConn
@@ -44,11 +46,12 @@ type Server struct {
 	upgrader       websocket.Upgrader
 }
 
-func New(token string) *Server {
-	mac := hmac.New(sha256.New, []byte(token))
+func New(password string) *Server {
+	mac := hmac.New(sha256.New, []byte(password))
 	mac.Write([]byte("portal-browser-session-v1"))
 	return &Server{
-		token:          token,
+		password:       password,
+		agentToken:     auth.AgentToken(password),
 		browserSession: hex.EncodeToString(mac.Sum(nil)),
 		agents:         map[string]*agentConn{},
 		routes:         map[string]*browserConn{},
@@ -116,10 +119,10 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
-		if err := r.ParseForm(); err != nil || !constantEqual(r.FormValue("token"), s.token) {
+		if err := r.ParseForm(); err != nil || !constantEqual(r.FormValue("password"), s.password) {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusUnauthorized)
-			fmt.Fprint(w, loginPage("wrong token"))
+			fmt.Fprint(w, loginPage("wrong password"))
 			return
 		}
 		http.SetCookie(w, &http.Cookie{Name: "portal_session", Value: s.browserSession, Path: "/", HttpOnly: true, Secure: isSecure(r), SameSite: http.SameSiteStrictMode, MaxAge: 30 * 24 * 3600})
@@ -144,7 +147,7 @@ func loginPage(errText string) string {
 	if errText != "" {
 		errHTML = `<p class="error">` + errText + `</p>`
 	}
-	return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Portal</title><style>:root{color-scheme:light dark}*{box-sizing:border-box}body{margin:0;height:100vh;display:grid;place-items:center;font:14px ui-monospace,SFMono-Regular,Menlo,monospace}form{width:min(360px,calc(100vw - 40px))}h1{font-size:20px}input,button{width:100%;padding:12px;font:inherit;margin-top:8px}button{cursor:pointer}.error{color:#c33}</style></head><body><form method="post"><h1>Portal</h1><input name="token" type="password" autocomplete="current-password" autofocus placeholder="access token"><button>Enter</button>` + errHTML + `</form></body></html>`
+	return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Portal</title><style>:root{color-scheme:light dark}*{box-sizing:border-box}body{margin:0;height:100vh;display:grid;place-items:center;font:14px ui-monospace,SFMono-Regular,Menlo,monospace}form{width:min(360px,calc(100vw - 40px))}h1{font-size:20px}input,button{width:100%;padding:12px;font:inherit;margin-top:8px}button{cursor:pointer}.error{color:#c33}</style></head><body><form method="post"><h1>Portal</h1><input name="password" type="password" autocomplete="current-password" autofocus placeholder="password"><button>Enter</button>` + errHTML + `</form></body></html>`
 }
 
 func isSecure(r *http.Request) bool {
@@ -189,7 +192,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 	token, ok := bearerToken(r)
-	if !ok || !constantEqual(token, s.token) {
+	if !ok || !constantEqual(token, s.agentToken) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
