@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -61,14 +62,17 @@ type authAttempt struct {
 type Server struct {
 	passwordHash string
 	agentToken   string
-	mu           sync.RWMutex
-	agents       map[string]*agentConn
-	routes       map[string]*browserConn
-	pending      map[string]pendingAction
-	authMu       sync.Mutex
-	sessions     map[string]time.Time
-	attempts     map[string]authAttempt
-	upgrader     websocket.Upgrader
+
+	mu      sync.RWMutex
+	agents  map[string]*agentConn
+	routes  map[string]*browserConn
+	pending map[string]pendingAction
+
+	authMu   sync.Mutex
+	sessions map[string]time.Time
+	attempts map[string]authAttempt
+
+	upgrader websocket.Upgrader
 }
 
 func New(passwordHash, agentToken string) *Server {
@@ -94,7 +98,12 @@ func (s *Server) Run(addr string) error {
 	mux.HandleFunc("/api/session", s.requireBrowser(s.handleSessionAction))
 	mux.HandleFunc("/api/terminal", s.requireBrowser(s.handleTerminal))
 	mux.HandleFunc("/api/agent", s.handleAgent)
-	server := &http.Server{Addr: addr, Handler: securityHeaders(mux), ReadHeaderTimeout: 10 * time.Second}
+
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           securityHeaders(mux),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 	log.Printf("portal hub listening on %s", addr)
 	return server.ListenAndServe()
 }
@@ -123,6 +132,7 @@ func (s *Server) browserOK(r *http.Request) bool {
 	if err != nil || c.Value == "" {
 		return false
 	}
+
 	now := time.Now()
 	s.authMu.Lock()
 	expires, ok := s.sessions[c.Value]
@@ -154,7 +164,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(webui.IndexHTML)
+	_, _ = w.Write(webui.IndexHTML)
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -164,14 +174,16 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			writeThrottle(w, wait, true)
 			return
 		}
+
 		if err := r.ParseForm(); err != nil || !auth.VerifyPassword(s.passwordHash, r.FormValue("password")) {
 			wait := s.authFailure(ip)
 			w.Header().Set("Retry-After", strconv.Itoa(retrySeconds(wait)))
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusUnauthorized)
-			fmt.Fprint(w, loginPage("wrong password"))
+			_, _ = fmt.Fprint(w, loginPage("wrong password"))
 			return
 		}
+
 		s.authSuccess(ip)
 		token, err := auth.RandomToken()
 		if err != nil {
@@ -181,16 +193,26 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.authMu.Lock()
 		s.sessions[token] = time.Now().Add(browserSessionTTL)
 		s.authMu.Unlock()
-		http.SetCookie(w, &http.Cookie{Name: "portal_session", Value: token, Path: "/", HttpOnly: true, Secure: isSecure(r), SameSite: http.SameSiteStrictMode, MaxAge: int(browserSessionTTL / time.Second)})
+
+		http.SetCookie(w, &http.Cookie{
+			Name:     "portal_session",
+			Value:    token,
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   isSecure(r),
+			SameSite: http.SameSiteStrictMode,
+			MaxAge:   int(browserSessionTTL / time.Second),
+		})
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
+
 	if s.browserOK(r) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, loginPage(""))
+	_, _ = fmt.Fprint(w, loginPage(""))
 }
 
 func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
@@ -198,20 +220,23 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
 	ip := clientIP(r)
 	if wait := s.authWait(ip); wait > 0 {
 		writeThrottle(w, wait, false)
 		return
 	}
+
 	if err := r.ParseForm(); err != nil || !auth.VerifyPassword(s.passwordHash, r.FormValue("password")) {
 		wait := s.authFailure(ip)
 		w.Header().Set("Retry-After", strconv.Itoa(retrySeconds(wait)))
 		http.Error(w, "wrong password", http.StatusUnauthorized)
 		return
 	}
+
 	s.authSuccess(ip)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(struct {
+	_ = json.NewEncoder(w).Encode(struct {
 		Token string `json:"token"`
 	}{Token: s.agentToken})
 }
@@ -222,7 +247,15 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		delete(s.sessions, c.Value)
 		s.authMu.Unlock()
 	}
-	http.SetCookie(w, &http.Cookie{Name: "portal_session", Value: "", Path: "/", HttpOnly: true, Secure: isSecure(r), SameSite: http.SameSiteStrictMode, MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{
+		Name:     "portal_session",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   isSecure(r),
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   -1,
+	})
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
@@ -251,6 +284,7 @@ func (s *Server) authFailure(ip string) time.Duration {
 	s.authMu.Lock()
 	defer s.authMu.Unlock()
 	s.pruneAttemptsLocked(now)
+
 	a := s.attempts[ip]
 	a.failures++
 	shift := a.failures - 1
@@ -277,6 +311,7 @@ func (s *Server) pruneAttemptsLocked(now time.Time) {
 	if len(s.attempts) < 1024 {
 		return
 	}
+
 	oldestIP := ""
 	var oldest time.Time
 	for ip, a := range s.attempts {
@@ -299,7 +334,7 @@ func writeThrottle(w http.ResponseWriter, wait time.Duration, html bool) {
 	if html {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusTooManyRequests)
-		fmt.Fprint(w, loginPage(fmt.Sprintf("too many attempts; retry in %ds", seconds)))
+		_, _ = fmt.Fprint(w, loginPage(fmt.Sprintf("too many attempts; retry in %ds", seconds)))
 		return
 	}
 	http.Error(w, fmt.Sprintf("too many attempts; retry in %ds", seconds), http.StatusTooManyRequests)
@@ -319,6 +354,10 @@ func clientIP(r *http.Request) string {
 		host = r.RemoteAddr
 	}
 	remote := net.ParseIP(strings.TrimSpace(host))
+
+	// Portal's normal public transports proxy into a loopback-only hub. Trust only
+	// proxy-appended addresses when the immediate peer is local, and take the
+	// nearest (rightmost) forwarded address rather than a spoofable leftmost one.
 	if remote != nil && remote.IsLoopback() {
 		parts := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
 		for i := len(parts) - 1; i >= 0; i-- {
@@ -327,6 +366,7 @@ func clientIP(r *http.Request) string {
 			}
 		}
 	}
+
 	if remote != nil {
 		return remote.String()
 	}
@@ -377,6 +417,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, _ *http.Request) {
 	}
 	hostCount := len(s.agents)
 	s.mu.RUnlock()
+
 	sort.Strings(hosts)
 	sort.Slice(list, func(i, j int) bool {
 		if list[i].Host == list[j].Host {
@@ -390,8 +431,14 @@ func (s *Server) handleSessions(w http.ResponseWriter, _ *http.Request) {
 		}
 		return schedules[i].FirstAt < schedules[j].FirstAt
 	})
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(protocol.SessionList{HostCount: hostCount, Hosts: hosts, Sessions: list, Schedules: schedules})
+	_ = json.NewEncoder(w).Encode(protocol.SessionList{
+		HostCount: hostCount,
+		Hosts:     hosts,
+		Sessions:  list,
+		Schedules: schedules,
+	})
 }
 
 type sessionActionRequest struct {
@@ -416,9 +463,23 @@ func (s *Server) handleSessionAction(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad origin", http.StatusForbidden)
 		return
 	}
+
 	var req sessionActionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	if req.Action == "shutdown" {
+		writeOK(w)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		log.Printf("Portal stopped from authenticated web settings; tmux sessions were not touched")
+		go func() {
+			time.Sleep(150 * time.Millisecond)
+			os.Exit(0)
+		}()
 		return
 	}
 
@@ -457,6 +518,7 @@ func (s *Server) handleSessionAction(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "host required", http.StatusBadRequest)
 		return
 	}
+
 	s.mu.RLock()
 	a := s.agents[req.Host]
 	s.mu.RUnlock()
@@ -548,11 +610,19 @@ func (s *Server) handleSessionAction(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		m = protocol.Message{Type: "schedule_input", Session: req.Session, Text: req.Text, DelaySeconds: int64(delay / time.Second), Repeat: repeat, IntervalSeconds: int64(interval / time.Second)}
+		m = protocol.Message{
+			Type:            "schedule_input",
+			Session:         req.Session,
+			Text:            req.Text,
+			DelaySeconds:    int64(delay / time.Second),
+			Repeat:          repeat,
+			IntervalSeconds: int64(interval / time.Second),
+		}
 	default:
 		http.Error(w, "unknown action", http.StatusBadRequest)
 		return
 	}
+
 	if err := s.callAgent(a, m); err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -562,7 +632,7 @@ func (s *Server) handleSessionAction(w http.ResponseWriter, r *http.Request) {
 
 func writeOK(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprint(w, `{"ok":true}`)
+	_, _ = fmt.Fprint(w, `{"ok":true}`)
 }
 
 func validSessionName(name string) bool {
@@ -614,26 +684,36 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+
 	ws, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
 	defer ws.Close()
+
 	var hello protocol.Message
 	if err := ws.ReadJSON(&hello); err != nil || hello.Type != "hello" || hello.Host == "" {
 		return
 	}
-	a := &agentConn{host: hello.Host, ws: ws, capabilities: append([]string(nil), hello.Capabilities...)}
+
+	a := &agentConn{
+		host:         hello.Host,
+		ws:           ws,
+		capabilities: append([]string(nil), hello.Capabilities...),
+	}
 	applyAgentSnapshot(a, hello)
+
 	s.mu.Lock()
 	old := s.agents[a.host]
 	s.agents[a.host] = a
 	s.mu.Unlock()
 	if old != nil && old != a {
-		old.ws.Close()
+		_ = old.ws.Close()
 	}
+
 	log.Printf("host connected: %s", a.host)
 	defer s.removeAgent(a)
+
 	for {
 		var m protocol.Message
 		if err := ws.ReadJSON(&m); err != nil {
@@ -663,6 +743,7 @@ func (s *Server) callAgent(a *agentConn, m protocol.Message) error {
 	id := randomID()
 	m.ID = id
 	ch := make(chan protocol.Message, 1)
+
 	s.mu.Lock()
 	s.pending[id] = pendingAction{host: a.host, ch: ch}
 	s.mu.Unlock()
@@ -671,9 +752,11 @@ func (s *Server) callAgent(a *agentConn, m protocol.Message) error {
 		delete(s.pending, id)
 		s.mu.Unlock()
 	}()
+
 	if err := s.writeAgent(a, m); err != nil {
 		return fmt.Errorf("host %s disconnected", a.host)
 	}
+
 	select {
 	case result := <-ch:
 		if result.Error != "" {
@@ -705,6 +788,7 @@ func (s *Server) removeAgent(a *agentConn) {
 		return
 	}
 	delete(s.agents, a.host)
+
 	var closeRoutes []*browserConn
 	for id, b := range s.routes {
 		if b.host == a.host {
@@ -712,6 +796,7 @@ func (s *Server) removeAgent(a *agentConn) {
 			closeRoutes = append(closeRoutes, b)
 		}
 	}
+
 	var pending []chan protocol.Message
 	for _, p := range s.pending {
 		if p.host == a.host {
@@ -719,8 +804,9 @@ func (s *Server) removeAgent(a *agentConn) {
 		}
 	}
 	s.mu.Unlock()
+
 	for _, b := range closeRoutes {
-		b.ws.Close()
+		_ = b.ws.Close()
 	}
 	for _, ch := range pending {
 		select {
@@ -732,11 +818,13 @@ func (s *Server) removeAgent(a *agentConn) {
 }
 
 func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
-	host, session := r.URL.Query().Get("host"), r.URL.Query().Get("session")
+	host := r.URL.Query().Get("host")
+	session := r.URL.Query().Get("session")
 	if host == "" || session == "" {
 		http.Error(w, "host and session required", http.StatusBadRequest)
 		return
 	}
+
 	s.mu.RLock()
 	a := s.agents[host]
 	s.mu.RUnlock()
@@ -744,11 +832,13 @@ func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "host offline", http.StatusNotFound)
 		return
 	}
+
 	ws, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
 	defer ws.Close()
+
 	id := randomID()
 	b := &browserConn{host: host, ws: ws}
 	s.mu.Lock()
@@ -758,22 +848,30 @@ func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		delete(s.routes, id)
 		s.mu.Unlock()
-		s.writeAgent(a, protocol.Message{Type: "close", ID: id})
+		_ = s.writeAgent(a, protocol.Message{Type: "close", ID: id})
 	}()
+
 	if err := s.writeAgent(a, protocol.Message{Type: "open", ID: id, Session: session}); err != nil {
 		return
 	}
+
 	for {
 		messageType, data, err := ws.ReadMessage()
 		if err != nil {
 			return
 		}
+
 		if messageType == websocket.BinaryMessage {
-			if err := s.writeAgent(a, protocol.Message{Type: "input", ID: id, Data: base64.StdEncoding.EncodeToString(data)}); err != nil {
+			if err := s.writeAgent(a, protocol.Message{
+				Type: "input",
+				ID:   id,
+				Data: base64.StdEncoding.EncodeToString(data),
+			}); err != nil {
 				return
 			}
 			continue
 		}
+
 		if messageType == websocket.TextMessage {
 			var resize struct {
 				Type string `json:"type"`
@@ -781,7 +879,12 @@ func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 				Rows uint16 `json:"rows"`
 			}
 			if json.Unmarshal(data, &resize) == nil && resize.Type == "resize" {
-				if err := s.writeAgent(a, protocol.Message{Type: "resize", ID: id, Cols: resize.Cols, Rows: resize.Rows}); err != nil {
+				if err := s.writeAgent(a, protocol.Message{
+					Type: "resize",
+					ID:   id,
+					Cols: resize.Cols,
+					Rows: resize.Rows,
+				}); err != nil {
 					return
 				}
 			}
@@ -804,7 +907,7 @@ func (s *Server) writeBrowser(id string, messageType int, data []byte) {
 	}
 	b.writeMu.Lock()
 	defer b.writeMu.Unlock()
-	b.ws.WriteMessage(messageType, data)
+	_ = b.ws.WriteMessage(messageType, data)
 }
 
 func randomID() string {
