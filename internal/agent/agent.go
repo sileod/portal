@@ -146,8 +146,8 @@ func (c *connection) open(id, session string) {
 	if id == "" || session == "" {
 		return
 	}
-	if exec.Command("tmux", "has-session", "-t", session).Run() != nil {
-		c.write(protocol.Message{Type: "error", ID: id, Error: "tmux session not found: " + session})
+	if !contains(Sessions(), session) {
+		c.write(protocol.Message{Type: "error", ID: id, Error: "portal session not found: " + session})
 		return
 	}
 	c.close(id)
@@ -233,14 +233,26 @@ func (c *connection) closeAll() {
 }
 
 func Sessions() []string {
-	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
+	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}\t#{@portal}").Output()
 	if err != nil {
 		return nil
 	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) == 1 && lines[0] == "" {
-		return nil
+	var sessions []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) == 2 && parts[1] == "1" && parts[0] != "" {
+			sessions = append(sessions, parts[0])
+		}
 	}
-	sort.Strings(lines)
-	return lines
+	sort.Strings(sessions)
+	return sessions
+}
+
+func contains(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }
