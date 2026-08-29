@@ -55,14 +55,7 @@ func New(password string) *Server {
 		browserSession: hex.EncodeToString(mac.Sum(nil)),
 		agents:         map[string]*agentConn{},
 		routes:         map[string]*browserConn{},
-		upgrader: websocket.Upgrader{CheckOrigin: func(r *http.Request) bool {
-			origin := r.Header.Get("Origin")
-			if origin == "" {
-				return true
-			}
-			u, err := url.Parse(origin)
-			return err == nil && strings.EqualFold(u.Host, r.Host)
-		}},
+		upgrader: websocket.Upgrader{CheckOrigin: sameOrigin},
 	}
 }
 
@@ -72,6 +65,7 @@ func (s *Server) Run(addr string) error {
 	mux.HandleFunc("/login", s.handleLogin)
 	mux.HandleFunc("/logout", s.handleLogout)
 	mux.HandleFunc("/api/sessions", s.requireBrowser(s.handleSessions))
+	mux.HandleFunc("/api/session", s.requireBrowser(s.handleSessionAction))
 	mux.HandleFunc("/api/terminal", s.requireBrowser(s.handleTerminal))
 	mux.HandleFunc("/api/agent", s.handleAgent)
 	server := &http.Server{Addr: addr, Handler: securityHeaders(mux), ReadHeaderTimeout: 10 * time.Second}
@@ -87,6 +81,15 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' ws: wss:; font-src 'self' data:")
 		next.ServeHTTP(w, r)
 	})
+}
+
+func sameOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	return err == nil && strings.EqualFold(u.Host, r.Host)
 }
 
 func (s *Server) browserOK(r *http.Request) bool {
@@ -188,6 +191,78 @@ func (s *Server) handleSessions(w http.ResponseWriter, _ *http.Request) {
 	})
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(protocol.SessionList{HostCount: hostCount, Sessions: list})
+}
+
+type sessionActionRequest struct {
+	Action  string `json:"action"`
+	Host    string `json:"host"`
+	Session string `json:"session"`
+	Delay   string `json:"delay,omitempty"`
+	Text    string `json:"text,omitempty"`
+}
+
+func (s *Server) handleSessionAction(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !sameOrigin(r) {
+		http.Error(w, "bad origin", http.StatusForbidden)
+		return
+	}
+	var req sessionActionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if req.Host == "" || req.Session == "" {
+		http.Error(w, "host and session required", http.StatusBadRequest)
+		return
+	}
+	s.mu.RLock()
+	a := s.agents[req.Host]
+	found := a != nil && containsString(a.sessions, req.Session)
+	s.mu.RUnlock()
+	if !found {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	var m protocol.Message
+	switch req.Action {
+	case "kill":
+		m = protocol.Message{Type: "kill_session", Session: req.Session}
+	case "schedule":
+		delay, err := time.ParseDuration(strings.TrimSpace(req.Delay))
+		if err != nil || delay < time.Second || delay > 30*24*time.Hour {
+			http.Error(w, "delay must be between 1s and 720h", http.StatusBadRequest)
+			return
+		}
+		if req.Text == "" || len(req.Text) > 4096 || strings.ContainsAny(req.Text, "\r\n") {
+			http.Error(w, "message must be one non-empty line up to 4096 bytes", http.StatusBadRequest)
+			return
+		}
+		m = protocol.Message{Type: "schedule_input", Session: req.Session, Text: req.Text, DelaySeconds: int64(delay / time.Second)}
+	default:
+		http.Error(w, "unknown action", http.StatusBadRequest)
+		return
+	}
+	if err := s.writeAgent(a, m); err != nil {
+		http.Error(w, "host disconnected", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	fmt.Fprint(w, `{"ok":true}`)
+}
+
+func containsString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
