@@ -22,6 +22,8 @@ Portal is terminal-first and tool-agnostic. Codex, Claude, Vim, htop, shells, SS
 curl -fsSL https://raw.githubusercontent.com/sileod/portal/main/install.sh | sh
 ```
 
+The normal install downloads a prebuilt Linux/macOS amd64/arm64 binary. **Go is not a Portal user dependency and the installer never installs Go.** If no binary has been published yet, it may build only when Go is already present on the machine.
+
 The installer puts `portal` in `~/.local/bin`, installs `tmux` if you want it to, then asks how the central URL should be exposed:
 
 ```text
@@ -51,7 +53,7 @@ Every Portal-managed terminal appears at the same central URL. With multiple hos
 The installer is only a convenience. The same provider setup is available directly:
 
 ```bash
-portal expose tailscale --key "$TAILSCALE_AUTHKEY"
+TAILSCALE_AUTHKEY="$TAILSCALE_AUTHKEY" portal expose tailscale
 ```
 
 Tailscale Funnel is intentionally used here rather than Tailscale Serve: Funnel exposes the HTTPS endpoint to the public internet, while Portal itself authenticates access to the terminals.
@@ -59,9 +61,8 @@ Tailscale Funnel is intentionally used here rather than Tailscale Serve: Funnel 
 For a remotely managed Cloudflare Tunnel, configure its public hostname to route to `http://127.0.0.1:8080`, then run:
 
 ```bash
-portal expose cloudflare \
-  --key "$CLOUDFLARE_TUNNEL_TOKEN" \
-  --url https://portal.example.com
+CLOUDFLARE_TUNNEL_TOKEN="$CLOUDFLARE_TUNNEL_TOKEN" \
+portal expose cloudflare --url https://portal.example.com
 ```
 
 Cloudflare's tunnel token starts the already-configured tunnel; Portal still provides the terminal authentication layer.
@@ -146,27 +147,15 @@ Tailscale Funnel and Cloudflare Tunnel provide the public HTTPS transport. Porta
 
 Terminal traffic is encrypted in transit by HTTPS/WSS but is not yet end-to-end encrypted from browser to host, so the hub can currently see terminal bytes.
 
-## Build
+## Releases
 
-```bash
-go build -o portal ./cmd/portal
-```
-
-Terminal hosts need `tmux`. The hub does not.
-
-Tagging a version such as `v0.1.0` runs the release workflow and publishes Linux/macOS amd64/arm64 tarballs consumed by `install.sh`. Until the first release exists, the installer falls back to `go install` when Go is available.
+Every push to `main` can publish/update the rolling `edge` release with prebuilt Linux/macOS amd64/arm64 binaries. Tags matching `v*` publish normal versioned releases. `install.sh` prefers the latest stable release and falls back to `edge`.
 
 ## Development
 
-```bash
-PORTAL_TOKEN=dev-token go run ./cmd/portal hub
-```
-
-Then, on a machine with tmux:
+Go 1.22+ is needed only to develop/build Portal from source.
 
 ```bash
-go build -o /tmp/portal ./cmd/portal
-/tmp/portal link http://localhost:8080 --token dev-token
-/tmp/portal setup
-/tmp/portal codex
+go build -o portal ./cmd/portal
+PORTAL_TOKEN=dev-token ./portal hub
 ```
