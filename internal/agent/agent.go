@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -73,7 +75,10 @@ func runOnce(cfg Config) error {
 		c.closeAll()
 		ws.Close()
 	}()
-	if err := c.write(protocol.Message{Type: "hello", Host: cfg.Host, Sessions: Sessions(), Capabilities: []string{controlCapability}}); err != nil {
+	hello := snapshotMessage("hello")
+	hello.Host = cfg.Host
+	hello.Capabilities = []string{controlCapability}
+	if err := c.write(hello); err != nil {
 		return err
 	}
 	log.Printf("connected to %s as %s", cfg.URL, cfg.Host)
@@ -101,7 +106,7 @@ func runOnce(cfg Config) error {
 		case "create_session":
 			c.finishAction(m.ID, c.createSession(m.Name, m.Command), true)
 		case "schedule_input":
-			c.finishAction(m.ID, c.scheduleInput(m.Session, m.Text, m.DelaySeconds, m.Repeat, m.IntervalSeconds), false)
+			c.finishAction(m.ID, c.scheduleInput(m.Session, m.Text, m.DelaySeconds, m.Repeat, m.IntervalSeconds), true)
 		case "status_color":
 			c.finishAction(m.ID, c.setStatusColor(m.Value), false)
 		}
@@ -136,7 +141,7 @@ func (c *connection) write(m protocol.Message) error {
 
 func (c *connection) finishAction(id string, err error, publish bool) {
 	if err == nil && publish {
-		_ = c.write(protocol.Message{Type: "sessions", Sessions: Sessions()})
+		_ = c.write(snapshotMessage("sessions"))
 	}
 	if id == "" {
 		return
@@ -157,16 +162,25 @@ func (c *connection) publishSessions(done <-chan struct{}) {
 		case <-done:
 			return
 		case <-ticker.C:
-			sessions := Sessions()
-			joined := strings.Join(sessions, "\x00")
+			m := snapshotMessage("sessions")
+			data, _ := json.Marshal(struct {
+				Sessions  []protocol.Session  `json:"sessions"`
+				Schedules []protocol.Schedule `json:"schedules"`
+			}{m.SessionInfos, m.Schedules})
+			joined := string(data)
 			if joined != last {
-				if c.write(protocol.Message{Type: "sessions", Sessions: sessions}) != nil {
+				if c.write(m) != nil {
 					return
 				}
 				last = joined
 			}
 		}
 	}
+}
+
+func snapshotMessage(messageType string) protocol.Message {
+	names, infos := sessionInfos()
+	return protocol.Message{Type: messageType, Sessions: names, SessionInfos: infos, Schedules: pendingSchedules()}
 }
 
 func (c *connection) open(id, session string) {
@@ -341,8 +355,28 @@ func (c *connection) scheduleInput(session, text string, delaySeconds int64, rep
 	if pane == "" {
 		return errors.New("could not resolve tmux pane")
 	}
+	now := time.Now().Unix()
+	id := fmt.Sprintf("%x", time.Now().UnixNano())
+	option := "@portal_schedule_" + id
+	schedule := protocol.Schedule{
+		ID:              id,
+		Session:         session,
+		Pane:            pane,
+		Text:            text,
+		CreatedAt:       now,
+		FirstAt:         now + delaySeconds,
+		Repeat:          repeat,
+		IntervalSeconds: intervalSeconds,
+	}
+	data, err := json.Marshal(schedule)
+	if err != nil {
+		return err
+	}
+	if out, err := exec.Command("tmux", "set-option", "-g", option, string(data)).CombinedOutput(); err != nil {
+		return fmt.Errorf("save scheduled input: %s", commandError(err, out))
+	}
 	script := fmt.Sprintf(
-		"sleep %d; i=1; while [ $i -le %d ]; do tmux send-keys -t %s -l -- %s; tmux send-keys -t %s Enter; i=$((i+1)); if [ $i -le %d ]; then sleep %d; fi; done",
+		"sleep %d; i=1; while [ $i -le %d ]; do tmux send-keys -t %s -l -- %s && tmux send-keys -t %s Enter || break; i=$((i+1)); if [ $i -le %d ]; then sleep %d; fi; done; tmux set-option -gu %s",
 		delaySeconds,
 		repeat,
 		shellQuote(pane),
@@ -350,9 +384,11 @@ func (c *connection) scheduleInput(session, text string, delaySeconds int64, rep
 		shellQuote(pane),
 		repeat,
 		intervalSeconds,
+		shellQuote(option),
 	)
 	out, err := exec.Command("tmux", "run-shell", "-b", script).CombinedOutput()
 	if err != nil {
+		_ = exec.Command("tmux", "set-option", "-gu", option).Run()
 		return fmt.Errorf("tmux schedule: %s", commandError(err, out))
 	}
 	return nil
@@ -432,20 +468,78 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
-func Sessions() []string {
-	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}\t#{@portal}").Output()
+func sessionInfos() ([]string, []protocol.Session) {
+	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}\t#{@portal}\t#{session_activity}").Output()
+	if err != nil {
+		return nil, nil
+	}
+	var names []string
+	var infos []protocol.Session
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) < 2 || parts[1] != "1" || parts[0] == "" {
+			continue
+		}
+		activity := int64(0)
+		if len(parts) == 3 {
+			activity, _ = strconv.ParseInt(parts[2], 10, 64)
+		}
+		names = append(names, parts[0])
+		infos = append(infos, protocol.Session{Session: parts[0], LastActivity: activity})
+	}
+	sort.Strings(names)
+	sort.Slice(infos, func(i, j int) bool { return infos[i].Session < infos[j].Session })
+	return names, infos
+}
+
+func pendingSchedules() []protocol.Schedule {
+	out, err := exec.Command("tmux", "show-options", "-g").Output()
 	if err != nil {
 		return nil
 	}
-	var sessions []string
+	now := time.Now().Unix()
+	var schedules []protocol.Schedule
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		parts := strings.SplitN(line, "\t", 2)
-		if len(parts) == 2 && parts[1] == "1" && parts[0] != "" {
-			sessions = append(sessions, parts[0])
+		if !strings.HasPrefix(line, "@portal_schedule_") {
+			continue
 		}
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		option := parts[0]
+		var schedule protocol.Schedule
+		if json.Unmarshal([]byte(parts[1]), &schedule) != nil || schedule.ID == "" || schedule.Pane == "" {
+			continue
+		}
+		current, paneErr := exec.Command("tmux", "display-message", "-p", "-t", schedule.Pane, "#{session_name}").Output()
+		if paneErr != nil {
+			_ = exec.Command("tmux", "set-option", "-gu", option).Run()
+			continue
+		}
+		schedule.Session = strings.TrimSpace(string(current))
+		lastAt := schedule.FirstAt
+		if schedule.Repeat > 1 {
+			lastAt += int64(schedule.Repeat-1) * schedule.IntervalSeconds
+		}
+		if lastAt > 0 && now > lastAt+300 {
+			_ = exec.Command("tmux", "set-option", "-gu", option).Run()
+			continue
+		}
+		schedules = append(schedules, schedule)
 	}
-	sort.Strings(sessions)
-	return sessions
+	sort.Slice(schedules, func(i, j int) bool {
+		if schedules[i].FirstAt == schedules[j].FirstAt {
+			return schedules[i].ID < schedules[j].ID
+		}
+		return schedules[i].FirstAt < schedules[j].FirstAt
+	})
+	return schedules
+}
+
+func Sessions() []string {
+	names, _ := sessionInfos()
+	return names
 }
 
 func contains(items []string, want string) bool {
