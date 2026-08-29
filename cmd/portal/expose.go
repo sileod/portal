@@ -67,13 +67,13 @@ func exposeTailscale(args []string) error {
 	if err := ensureHub(password); err != nil {
 		return err
 	}
-	out, err := exec.Command("tailscale", "funnel", "--bg", "--yes", fmt.Sprintf("http://127.0.0.1:%d", hubPort)).CombinedOutput()
+	out, err := privilegedCommand("tailscale", "funnel", "--bg", "--yes", fmt.Sprintf("http://127.0.0.1:%d", hubPort)).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tailscale funnel: %s", strings.TrimSpace(string(out)))
 	}
 	url := firstHTTPS(string(out))
 	if url == "" {
-		status, _ := exec.Command("tailscale", "funnel", "status").CombinedOutput()
+		status, _ := privilegedCommand("tailscale", "funnel", "status").CombinedOutput()
 		url = firstHTTPS(string(status))
 	}
 	if url == "" {
