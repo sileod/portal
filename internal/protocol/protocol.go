@@ -8,6 +8,9 @@ type Message struct {
 	Sessions        []string `json:"sessions,omitempty"`
 	Data            string   `json:"data,omitempty"`
 	Text            string   `json:"text,omitempty"`
+	Name            string   `json:"name,omitempty"`
+	Command         string   `json:"command,omitempty"`
+	Value           string   `json:"value,omitempty"`
 	DelaySeconds    int64    `json:"delay_seconds,omitempty"`
 	Repeat          int      `json:"repeat,omitempty"`
 	IntervalSeconds int64    `json:"interval_seconds,omitempty"`
