@@ -78,6 +78,8 @@ func run() error {
 		return link(args[1:])
 	case "expose":
 		return expose(args[1:])
+	case "host":
+		return setHost(args[1:])
 	case "ls":
 		cfg, err := loadConfig()
 		if err != nil {
@@ -147,6 +149,8 @@ portal NAME -- COMMAND...     create/keep a tab running COMMAND
 portal ls                     list local portal sessions
 portal rm NAME                remove a session
 portal open                   open the central URL
+portal host NAME              override this host label
+portal host NAME --tailscale  also rename this Funnel/MagicDNS host
 portal link URL --password P  link/relink this host with the Portal password
 portal expose tailscale       run the hub through Tailscale Funnel
 portal expose cloudflare      run the hub through Cloudflare Tunnel
@@ -172,10 +176,17 @@ func interactiveSetup() (config, error) {
 		return config{}, err
 	}
 	host, _ := os.Hostname()
+	fmt.Printf("Portal host name [%s]: ", host)
+	if raw, err := reader.ReadString('\n'); err == nil && strings.TrimSpace(raw) != "" {
+		host = strings.TrimSpace(raw)
+	}
 	secret := strings.TrimSpace(string(password))
 	cfg := config{URL: url, Token: auth.AgentToken(secret), Host: host}
 	if cfg.URL == "" || secret == "" || cfg.Host == "" {
 		return config{}, errors.New("URL, password, and host are required")
+	}
+	if !validHostAlias(cfg.Host) {
+		return config{}, errors.New("host name may contain only letters, digits, _, and -")
 	}
 	if err := saveConfig(cfg); err != nil {
 		return config{}, err
@@ -231,13 +242,69 @@ func link(args []string) error {
 	if cfg.Host == "" {
 		return errors.New("could not determine host name; pass --host NAME")
 	}
+	if !validHostAlias(cfg.Host) {
+		return errors.New("host name may contain only letters, digits, _, and -")
+	}
 	if err := saveConfig(cfg); err != nil {
 		return err
 	}
-	if err := ensureDaemon(); err != nil {
+	if err := restartDaemon(); err != nil {
 		return err
 	}
 	fmt.Printf("✓ linked %s\n%s\n", cfg.Host, cfg.URL)
+	return nil
+}
+
+func setHost(args []string) error {
+	if len(args) < 1 || len(args) > 2 {
+		return errors.New("usage: portal host NAME [--tailscale]")
+	}
+	name := args[0]
+	if !validHostAlias(name) {
+		return errors.New("host name may contain only letters, digits, _, and -")
+	}
+	renameTailscale := false
+	if len(args) == 2 {
+		if args[1] != "--tailscale" {
+			return fmt.Errorf("unknown option %s", args[1])
+		}
+		renameTailscale = true
+		if !validTailscaleHostname(name) {
+			return errors.New("Tailscale host names must be 1-63 letters, digits, or hyphens and cannot start or end with a hyphen")
+		}
+	}
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	if renameTailscale {
+		if _, err := exec.LookPath("tailscale"); err != nil {
+			return errors.New("tailscale is required for --tailscale")
+		}
+		out, err := privilegedCommand("tailscale", "set", "--hostname="+name).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("tailscale set hostname: %s", strings.TrimSpace(string(out)))
+		}
+		if processRunning(hubPIDPath()) {
+			out, err = privilegedCommand("tailscale", "funnel", "--bg", "--yes", fmt.Sprintf("http://127.0.0.1:%d", hubPort)).CombinedOutput()
+			if err != nil {
+				return fmt.Errorf("tailscale funnel: %s", strings.TrimSpace(string(out)))
+			}
+		}
+		if url, err := waitTailscaleURL(name); err == nil {
+			cfg.URL = url
+		} else {
+			return err
+		}
+	}
+	cfg.Host = name
+	if err := saveConfig(cfg); err != nil {
+		return err
+	}
+	if err := restartDaemon(); err != nil {
+		return err
+	}
+	fmt.Printf("✓ host: %s\nPortal: %s\n", cfg.Host, cfg.URL)
 	return nil
 }
 
@@ -301,6 +368,22 @@ func validName(name string) bool {
 	}
 	for _, r := range name {
 		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+func validHostAlias(name string) bool {
+	return len(name) <= 80 && validName(name)
+}
+
+func validTailscaleHostname(name string) bool {
+	if len(name) == 0 || len(name) > 63 || name[0] == '-' || name[len(name)-1] == '-' {
+		return false
+	}
+	for _, r := range name {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-') {
 			return false
 		}
 	}
@@ -390,6 +473,22 @@ func daemonRunning() bool {
 		return false
 	}
 	return syscall.Kill(pid, 0) == nil
+}
+
+func restartDaemon() error {
+	if data, err := os.ReadFile(pidPath()); err == nil {
+		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && pid > 0 {
+			_ = syscall.Kill(pid, syscall.SIGTERM)
+			for range 20 {
+				if syscall.Kill(pid, 0) != nil {
+					break
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+		}
+	}
+	_ = os.Remove(pidPath())
+	return ensureDaemon()
 }
 
 func ensureDaemon() error {
