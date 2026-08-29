@@ -17,6 +17,7 @@ On the first machine, choose **Create a new Portal**. The default setup uses Tai
 - only the hub machine needs Tailscale
 - browsers do not need Tailscale
 - Portal login is password-only; there is no username
+- the installer recommends generating a strong random Portal password
 
 On another machine, run the same installer and choose **Join an existing Portal**. Enter the Portal URL and the same password. Terminal hosts connect outbound, so they do not need inbound ports.
 
@@ -80,7 +81,7 @@ Run the installer again:
 curl -fsSL https://raw.githubusercontent.com/sileod/portal/main/install.sh | sh
 ```
 
-Portal replaces/restarts its own processes and leaves tmux sessions running.
+Portal replaces/restarts its own processes and leaves tmux sessions running. Older installs are migrated to the newer credential format; an old joined host may ask for the Portal password once to re-enroll.
 
 ## Public URL
 
@@ -96,7 +97,13 @@ portal expose cloudflare --url https://portal.example.com
 
 ## Security
 
-Browsers authenticate with the Portal password and receive an HttpOnly session cookie. Terminal hosts use an outbound bearer credential derived from that password.
+Portal treats the public URL as a remote-shell login surface:
+
+- passwords are verified with Argon2id, not stored or used as deterministic session keys
+- failed login/enrollment attempts are throttled per client IP with exponential backoff
+- browser logins mint random, server-side expiring sessions
+- terminal hosts receive an independent random 256-bit bearer credential after password enrollment over HTTPS
+- cookies are HttpOnly + SameSite=Strict and terminal WebSockets require the authenticated browser session
 
 Traffic is encrypted in transit with HTTPS/WSS. Portal does not yet provide end-to-end encryption between browser and terminal host, so the hub can currently see terminal bytes.
 
