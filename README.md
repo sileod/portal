@@ -5,23 +5,97 @@ One private URL for terminals on all your machines.
 Portal turns persistent `tmux` sessions into browser tabs. Each machine connects outbound to a central authenticated hub, so hosts can sit behind NAT, firewalls, home routers, or institutional networks with no inbound port.
 
 ```console
-$ portal
-Portal URL: https://portal.example.com
-Access token:
-✓ linked workstation
-Portal: https://portal.example.com
-Host: workstation (connected/reconnecting)
-
 $ portal setup
 ✓ workstation:setup
-https://portal.example.com
+https://workstation.example.ts.net
 
 $ portal codex
 ✓ workstation:codex
-https://portal.example.com
+https://workstation.example.ts.net
 ```
 
 Portal is terminal-first and tool-agnostic. Codex, Claude, Vim, htop, shells, SSH, or any other TUI are just terminal processes.
+
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sileod/portal/main/install.sh | sh
+```
+
+The installer puts `portal` in `~/.local/bin`, installs `tmux` if you want it to, then asks how the central URL should be exposed:
+
+```text
+Expose the central Portal URL with:
+  1) Tailscale Funnel (public HTTPS URL, Portal auth)
+  2) Cloudflare Tunnel
+  3) Not now
+Choice [1]:
+Tailscale auth key (leave blank if already connected):
+```
+
+The key prompt is hidden. With Tailscale, Portal joins the tailnet if necessary, starts the local hub, configures Tailscale Funnel, discovers the public HTTPS URL, generates the Portal access token, and links this machine to the hub.
+
+After that:
+
+```bash
+portal setup
+portal codex
+portal paper
+portal gpu -- nvtop
+```
+
+Every Portal-managed terminal appears at the same central URL. With multiple hosts, tabs become `host:session`.
+
+## Explicit setup
+
+The installer is only a convenience. The same provider setup is available directly:
+
+```bash
+portal expose tailscale --key "$TAILSCALE_AUTHKEY"
+```
+
+Tailscale Funnel is intentionally used here rather than Tailscale Serve: Funnel exposes the HTTPS endpoint to the public internet, while Portal itself authenticates access to the terminals.
+
+For a remotely managed Cloudflare Tunnel, configure its public hostname to route to `http://127.0.0.1:8080`, then run:
+
+```bash
+portal expose cloudflare \
+  --key "$CLOUDFLARE_TUNNEL_TOKEN" \
+  --url https://portal.example.com
+```
+
+Cloudflare's tunnel token starts the already-configured tunnel; Portal still provides the terminal authentication layer.
+
+To link another machine to an existing Portal instead of hosting the hub there:
+
+```bash
+portal link https://your-portal-url --token "$PORTAL_TOKEN"
+```
+
+Or simply run `portal` and enter the URL and access token interactively.
+
+## CLI
+
+```text
+portal                     show/setup the central Portal URL
+portal NAME                create/keep a terminal tab
+portal NAME -- COMMAND...  create/keep a tab running COMMAND
+portal ls                  list local Portal sessions
+portal rm NAME             remove a session
+portal open                open the central URL
+portal link URL --token T  link this host to an existing hub
+portal expose tailscale    host Portal through Tailscale Funnel
+portal expose cloudflare   host Portal through Cloudflare Tunnel
+portal hub                 run the hub directly
+```
+
+If `NAME` resolves to an executable, `portal NAME` runs that executable in the new session. Otherwise it creates a normal shell session. Existing tmux sessions can be opted into Portal by running `portal NAME`; only sessions explicitly marked by Portal are exposed.
+
+The same session remains locally attachable:
+
+```bash
+tmux attach -t codex
+```
 
 ## Architecture
 
@@ -44,73 +118,7 @@ Portal is terminal-first and tool-agnostic. Codex, Claude, Vim, htop, shells, SS
                             tmux       tmux
 ```
 
-The hub authenticates browsers and hosts and routes terminal streams. Hosts never need an inbound port.
-
-## Build
-
-```bash
-go build -o portal ./cmd/portal
-```
-
-Terminal hosts need `tmux`. The hub does not.
-
-## Run a hub
-
-Set one high-entropy shared token. Browsers use it to log in and hosts use it to authenticate their outbound connection.
-
-```bash
-export PORTAL_TOKEN="$(openssl rand -hex 32)"
-export PORTAL_ADDR=:8080
-./portal hub
-```
-
-Put the hub behind HTTPS and expose it at one stable URL. Caddy, Cloudflare Tunnel, nginx, Fly.io, Railway, a VPS, or any equivalent reverse proxy/PaaS is fine.
-
-A container image can run only the hub:
-
-```bash
-docker build -t portal .
-docker run --rm -p 8080:8080 -e PORTAL_TOKEN="$PORTAL_TOKEN" portal
-```
-
-## First run on a machine
-
-Just run:
-
-```bash
-portal
-```
-
-If the machine has never been linked, Portal asks for the central URL and access token, stores them in `~/.config/portal/config.json`, starts the outbound daemon, and prints the central URL.
-
-For scripts or provisioning:
-
-```bash
-portal link https://portal.example.com --token "$PORTAL_TOKEN"
-```
-
-Use `--host NAME` to override the machine hostname.
-
-Afterward:
-
-```bash
-portal                 # show URL + host status
-portal setup           # shell session named setup
-portal codex           # session named codex; runs codex if it exists
-portal paper           # shell session named paper
-portal gpu -- nvtop    # explicit command
-portal ls
-portal rm paper
-portal open
-```
-
-If `NAME` resolves to an executable, `portal NAME` runs that executable in the new session. Otherwise it creates a normal shell session. Existing sessions are simply reused.
-
-The same tmux session remains attachable locally:
-
-```bash
-tmux attach -t codex
-```
+The hub authenticates browsers and hosts and routes terminal streams. Terminal hosts never need an inbound port.
 
 ## Web UI
 
@@ -128,13 +136,25 @@ No projects, agents, SSH connection manager, IDE, or workflow model is imposed.
 
 ## Authentication and transport
 
-Authentication is part of the hub from the first version. The MVP uses one high-entropy access token:
+Authentication is part of Portal from the first version. The current hub uses one high-entropy access token:
 
 - hosts authenticate outbound WebSockets with `Authorization: Bearer …`
 - browsers submit the token once and receive an `HttpOnly`, `Secure`, `SameSite=Strict` session cookie
 - browser terminal WebSockets require that authenticated cookie and same-origin checks
 
-Deploy the hub behind HTTPS. Terminal traffic is encrypted in transit by HTTPS/WSS but is not yet end-to-end encrypted from browser to host, so the hub can currently see terminal bytes. E2E encryption is the next meaningful security milestone if Portal becomes a hosted service.
+Tailscale Funnel and Cloudflare Tunnel provide the public HTTPS transport. Portal provides the application authentication.
+
+Terminal traffic is encrypted in transit by HTTPS/WSS but is not yet end-to-end encrypted from browser to host, so the hub can currently see terminal bytes.
+
+## Build
+
+```bash
+go build -o portal ./cmd/portal
+```
+
+Terminal hosts need `tmux`. The hub does not.
+
+Tagging a version such as `v0.1.0` runs the release workflow and publishes Linux/macOS amd64/arm64 tarballs consumed by `install.sh`. Until the first release exists, the installer falls back to `go install` when Go is available.
 
 ## Development
 
@@ -150,5 +170,3 @@ go build -o /tmp/portal ./cmd/portal
 /tmp/portal setup
 /tmp/portal codex
 ```
-
-Open `http://localhost:8080`, log in with `dev-token`, and the sessions appear as tabs.
