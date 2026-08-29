@@ -2,8 +2,9 @@ name: release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -27,13 +28,15 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache: false
       - name: Build
         env:
           GOOS: ${{ matrix.os }}
           GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: 0
         run: |
-          go build -o portal ./cmd/portal
+          go mod download
+          go build -trimpath -ldflags='-s -w' -o portal ./cmd/portal
           tar -czf portal_${GOOS}_${GOARCH}.tar.gz portal
       - uses: actions/upload-artifact@v4
         with:
@@ -48,7 +51,18 @@ jobs:
         with:
           pattern: portal_*
           merge-multiple: true
-      - uses: softprops/action-gh-release@v2
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
         with:
           files: portal_*.tar.gz
           generate_release_notes: true
+      - name: Publish rolling edge release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: edge
+          name: Portal edge
+          prerelease: true
+          make_latest: false
+          files: portal_*.tar.gz
