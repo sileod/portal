@@ -91,6 +91,10 @@ func runOnce(cfg Config) error {
 			c.resize(m.ID, m.Cols, m.Rows)
 		case "close":
 			c.close(m.ID)
+		case "kill_session":
+			c.killSession(m.Session)
+		case "schedule_input":
+			c.scheduleInput(m.Session, m.Text, m.DelaySeconds)
 		}
 	}
 }
@@ -151,7 +155,7 @@ func (c *connection) open(id, session string) {
 		return
 	}
 	c.close(id)
-	cmd := exec.Command("tmux", "attach-session", "-t", session)
+	cmd := exec.Command("tmux", "attach-session", "-t", "="+session)
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 120, Rows: 32})
 	if err != nil {
 		c.write(protocol.Message{Type: "error", ID: id, Error: err.Error()})
@@ -230,6 +234,44 @@ func (c *connection) closeAll() {
 	for _, id := range ids {
 		c.close(id)
 	}
+}
+
+func (c *connection) killSession(session string) {
+	if !contains(Sessions(), session) {
+		return
+	}
+	if out, err := exec.Command("tmux", "kill-session", "-t", "="+session).CombinedOutput(); err != nil {
+		log.Printf("kill session %s: %v: %s", session, err, strings.TrimSpace(string(out)))
+	}
+}
+
+func (c *connection) scheduleInput(session, text string, delaySeconds int64) {
+	if delaySeconds <= 0 || text == "" || strings.ContainsAny(text, "\r\n") || !contains(Sessions(), session) {
+		return
+	}
+	paneOut, err := exec.Command("tmux", "display-message", "-p", "-t", "="+session, "#{pane_id}").Output()
+	if err != nil {
+		log.Printf("schedule input for %s: could not resolve pane: %v", session, err)
+		return
+	}
+	pane := strings.TrimSpace(string(paneOut))
+	if pane == "" {
+		return
+	}
+	script := fmt.Sprintf(
+		"sleep %d; tmux send-keys -t %s -l -- %s; tmux send-keys -t %s Enter",
+		delaySeconds,
+		shellQuote(pane),
+		shellQuote(text),
+		shellQuote(pane),
+	)
+	if out, err := exec.Command("tmux", "run-shell", "-b", script).CombinedOutput(); err != nil {
+		log.Printf("schedule input for %s: %v: %s", session, err, strings.TrimSpace(string(out)))
+	}
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 func Sessions() []string {
