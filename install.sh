@@ -95,69 +95,98 @@ install_tmux() {
 
 install_tailscale() {
     command -v tailscale >/dev/null 2>&1 && return
-    say "Portal uses Tailscale Funnel for its public HTTPS URL."
-    say "Only this host needs Tailscale; browsers opening Portal do not."
+    say "The hub uses Tailscale Funnel for its public HTTPS URL."
+    say "Only the hub host needs Tailscale; viewing browsers and joined terminal hosts do not."
     prompt "Install Tailscale using tailscale.com/install.sh? [Y/n] "
     case "${REPLY:-y}" in
-        n|N) say "Tailscale is required for the default Funnel setup."; exit 1 ;;
+        n|N) say "Tailscale is required to create the default Funnel hub."; exit 1 ;;
     esac
     curl -fsSL https://tailscale.com/install.sh | sh
+}
+
+choose_new_password() {
+    while :; do
+        secret "Choose Portal password: "
+        password="$REPLY"
+        if [ "${#password}" -lt 8 ]; then
+            say "Use at least 8 characters. This password protects a remote shell."
+            continue
+        fi
+        secret "Confirm Portal password: "
+        [ "$password" = "$REPLY" ] && break
+        say "Passwords did not match."
+    done
 }
 
 say "Installing Portal to $BIN"
 install_portal
 install_tmux
-install_tailscale
 say ""
+say "Portal setup:"
+say "  1) Create a new Portal with a public Tailscale Funnel URL"
+say "  2) Join an existing Portal as another terminal host"
+prompt "Choice [1]: "
+mode="${REPLY:-1}"
 
-key=""
-if ! tailscale status >/dev/null 2>&1; then
-    say "Tailscale is not connected on this host."
-    say "  1) Sign in in your browser (recommended)"
-    say "  2) Use a Tailscale auth key"
-    prompt "Choice [1]: "
-    case "${REPLY:-1}" in
-        1)
-            ;;
-        2)
-            say "Create the key in the Tailscale admin console. It is not your Portal password."
-            secret "Tailscale auth key (tskey-...): "
-            key="$REPLY"
-            case "$key" in
-                tskey-*) ;;
-                *) say "That does not look like a Tailscale-generated auth key (expected tskey-...)."; exit 1 ;;
+case "$mode" in
+    1)
+        install_tailscale
+        key=""
+        if ! tailscale status >/dev/null 2>&1; then
+            say ""
+            say "Tailscale is not connected on this hub host."
+            say "  1) Sign in in your browser (recommended)"
+            say "  2) Use a Tailscale auth key"
+            prompt "Choice [1]: "
+            case "${REPLY:-1}" in
+                1)
+                    ;;
+                2)
+                    say "Create the key in the Tailscale admin console. It is not your Portal password."
+                    secret "Tailscale auth key (tskey-...): "
+                    key="$REPLY"
+                    case "$key" in
+                        tskey-*) ;;
+                        *) say "That does not look like a Tailscale-generated auth key (expected tskey-...)."; exit 1 ;;
+                    esac
+                    ;;
+                *)
+                    say "Unknown choice."
+                    exit 1
+                    ;;
             esac
-            ;;
-        *)
-            say "Unknown choice."
+        fi
+
+        choose_new_password
+        say ""
+        say "Creating public Portal URL with Tailscale Funnel..."
+        if [ -n "$key" ]; then
+            TAILSCALE_AUTHKEY="$key" PORTAL_PASSWORD="$password" "$BIN" expose tailscale
+        else
+            PORTAL_PASSWORD="$password" "$BIN" expose tailscale
+        fi
+        say ""
+        say "Open the printed URL from any browser and enter your Portal password."
+        say "The viewing device does not need Tailscale."
+        ;;
+    2)
+        prompt "Existing Portal URL: "
+        url="$REPLY"
+        secret "Portal password: "
+        password="$REPLY"
+        if [ -z "$url" ] || [ -z "$password" ]; then
+            say "Portal URL and password are required."
             exit 1
-            ;;
-    esac
-fi
-
-while :; do
-    secret "Choose Portal password: "
-    password="$REPLY"
-    if [ "${#password}" -lt 8 ]; then
-        say "Use at least 8 characters. This password protects a remote shell."
-        continue
-    fi
-    secret "Confirm Portal password: "
-    [ "$password" = "$REPLY" ] && break
-    say "Passwords did not match."
-done
-
-say ""
-say "Creating public Portal URL with Tailscale Funnel..."
-if [ -n "$key" ]; then
-    TAILSCALE_AUTHKEY="$key" PORTAL_PASSWORD="$password" "$BIN" expose tailscale
-else
-    PORTAL_PASSWORD="$password" "$BIN" expose tailscale
-fi
-
-say ""
-say "Open the printed URL from any browser and enter your Portal password."
-say "The viewing device does not need Tailscale."
+        fi
+        PORTAL_PASSWORD="$password" "$BIN" link "$url"
+        say ""
+        say "Joined. This host connects outbound to the existing Portal; Tailscale is not required here."
+        ;;
+    *)
+        say "Unknown choice."
+        exit 1
+        ;;
+esac
 
 case ":$PATH:" in
     *":$INSTALL_DIR:"*) ;;
