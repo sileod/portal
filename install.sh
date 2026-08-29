@@ -37,6 +37,21 @@ stop_pidfile() {
     fi
     rm -f "$path"
 }
+config_value() {
+    key="$1"
+    sed -n 's/.*"'"$key"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG_DIR/config.json" 2>/dev/null | head -n1
+}
+generate_password() {
+    if command -v openssl >/dev/null 2>&1; then
+        openssl rand -base64 24 | tr '+/' '-_' | tr -d '=\n'
+        return
+    fi
+    if [ -r /dev/urandom ]; then
+        od -An -N24 -tx1 /dev/urandom | tr -d ' \n'
+        return
+    fi
+    return 1
+}
 
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 case "$(uname -m)" in
@@ -128,41 +143,91 @@ install_tailscale() {
 }
 
 choose_new_password() {
-    while :; do
-        secret "Choose Portal password: "
-        password="$REPLY"
-        if [ "${#password}" -lt 8 ]; then
-            say "Use at least 8 characters. This password protects a remote shell."
-            continue
-        fi
-        secret "Confirm Portal password: "
-        [ "$password" = "$REPLY" ] && break
-        say "Passwords did not match."
-    done
+    say ""
+    say "Portal protects a remote shell. Use a unique password and keep it in a password manager."
+    say "  1) Generate a strong random password (recommended)"
+    say "  2) Choose my own password"
+    prompt "Choice [1]: "
+    case "${REPLY:-1}" in
+        1)
+            password="$(generate_password)" || {
+                say "Could not generate a secure password on this machine."
+                exit 1
+            }
+            say ""
+            say "Generated Portal password:"
+            say "$password"
+            say ""
+            say "Save it now; Portal will not display it again."
+            ;;
+        2)
+            while :; do
+                secret "Choose Portal password (16+ characters): "
+                password="$REPLY"
+                if [ "${#password}" -lt 16 ]; then
+                    say "Use at least 16 characters. This password protects a remote shell."
+                    continue
+                fi
+                secret "Confirm Portal password: "
+                [ "$password" = "$REPLY" ] && break
+                say "Passwords did not match."
+            done
+            ;;
+        *)
+            say "Unknown choice."
+            exit 1
+            ;;
+    esac
 }
 
 restart_existing() {
     say "Existing Portal detected; updating without touching tmux sessions."
     stop_pidfile "$CONFIG_DIR/daemon.pid"
 
+    auth_v2=0
+    grep -Eq '"auth_version"[[:space:]]*:[[:space:]]*2' "$CONFIG_DIR/config.json" 2>/dev/null && auth_v2=1
+
     if [ "$HUB_WAS_RUNNING" -eq 1 ]; then
-        hub_pid="$(cat "$CONFIG_DIR/hub.pid" 2>/dev/null || true)"
-        password=""
-        if [ "$OS" = linux ] && [ -n "$hub_pid" ] && [ -r "/proc/$hub_pid/environ" ]; then
-            password="$(tr '\000' '\n' < "/proc/$hub_pid/environ" | sed -n 's/^PORTAL_PASSWORD=//p' | head -n1)"
+        if [ ! -f "$CONFIG_DIR/hub-auth.json" ]; then
+            hub_pid="$(cat "$CONFIG_DIR/hub.pid" 2>/dev/null || true)"
+            password=""
+            if [ "$OS" = linux ] && [ -n "$hub_pid" ] && [ -r "/proc/$hub_pid/environ" ]; then
+                password="$(tr '\000' '\n' < "/proc/$hub_pid/environ" | sed -n 's/^PORTAL_PASSWORD=//p' | head -n1)"
+                [ -n "$password" ] || password="$(tr '\000' '\n' < "/proc/$hub_pid/environ" | sed -n 's/^PORTAL_TOKEN=//p' | head -n1)"
+            fi
+            if [ -z "$password" ]; then
+                secret "Portal password (one-time security migration): "
+                password="$REPLY"
+            fi
+            PORTAL_PASSWORD="$password" "$BIN" auth-init
+            password=""
+            auth_v2=1
         fi
-        if [ -z "$password" ]; then
-            secret "Portal password (needed once to restart the web hub): "
-            password="$REPLY"
-        fi
+
         stop_pidfile "$CONFIG_DIR/hub.pid"
         mkdir -p "$CONFIG_DIR"
-        PORTAL_PASSWORD="$password" PORTAL_ADDR="127.0.0.1:8080" nohup "$BIN" hub >> "$CONFIG_DIR/hub.log" 2>&1 </dev/null &
+        PORTAL_ADDR="127.0.0.1:8080" nohup "$BIN" hub >> "$CONFIG_DIR/hub.log" 2>&1 </dev/null &
         echo $! > "$CONFIG_DIR/hub.pid"
+    elif [ "$auth_v2" -ne 1 ]; then
+        url="$(config_value url)"
+        host_name="$(config_value host)"
+        if [ -z "$url" ] || [ -z "$host_name" ]; then
+            say "Could not read the existing Portal URL/host for auth migration."
+            exit 1
+        fi
+        secret "Portal password (one-time host re-enrollment): "
+        password="$REPLY"
+        PORTAL_PASSWORD="$password" "$BIN" link "$url" --host "$host_name"
+        password=""
+        say "✓ Portal updated"
+        say "✓ host credential rotated"
+        say "✓ tmux sessions and scheduled tmux actions were left running"
+        exit 0
     fi
 
     "$BIN" >/dev/null
     say "✓ Portal updated"
+    say "✓ authentication hardened"
     say "✓ tmux sessions and scheduled tmux actions were left running"
     exit 0
 }
@@ -220,6 +285,7 @@ case "$mode" in
         else
             PORTAL_FUNNEL_HOST="$hub_name" PORTAL_HOST="$hub_name" PORTAL_PASSWORD="$password" "$BIN" expose tailscale
         fi
+        password=""
         say ""
         say "Open the printed URL from any browser and enter your Portal password."
         say "The viewing device does not need Tailscale."
@@ -237,6 +303,7 @@ case "$mode" in
             exit 1
         fi
         PORTAL_PASSWORD="$password" "$BIN" link "$url" --host "$host_name"
+        password=""
         say ""
         say "Joined. This host connects outbound to the existing Portal; Tailscale is not required here."
         ;;
