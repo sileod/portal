@@ -267,7 +267,15 @@ func createSession(name string, command []string) error {
 }
 
 func markPortalSession(name string) error {
-	return exec.Command("tmux", "set-option", "-t", name, "@portal", "1").Run()
+	if err := exec.Command("tmux", "set-option", "-t", name, "@portal", "1").Run(); err != nil {
+		return err
+	}
+	if out, err := exec.Command("tmux", "show-option", "-gqv", "@portal_status_bg").Output(); err == nil {
+		if color := strings.TrimSpace(string(out)); color != "" {
+			exec.Command("tmux", "set-option", "-t", name, "status-style", "bg="+color).Run()
+		}
+	}
+	return nil
 }
 
 func isPortalSession(name string) bool {
