@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/sileod/portal/internal/agent"
-	"github.com/sileod/portal/internal/auth"
 	"github.com/sileod/portal/internal/hub"
 	"golang.org/x/term"
 )
@@ -24,9 +23,10 @@ import (
 var errNotLinked = errors.New("not linked")
 
 type config struct {
-	URL   string `json:"url"`
-	Token string `json:"token"`
-	Host  string `json:"host"`
+	URL         string `json:"url"`
+	Token       string `json:"token"`
+	Host        string `json:"host"`
+	AuthVersion int    `json:"auth_version,omitempty"`
 }
 
 func main() {
@@ -55,15 +55,29 @@ func run() error {
 
 	switch args[0] {
 	case "hub":
-		password := firstNonEmpty(os.Getenv("PORTAL_PASSWORD"), os.Getenv("PORTAL_TOKEN"))
-		if password == "" {
-			return errors.New("PORTAL_PASSWORD is required")
+		state, err := loadOrBootstrapHubAuth()
+		if err != nil {
+			return err
 		}
 		addr := os.Getenv("PORTAL_ADDR")
 		if addr == "" {
 			addr = ":8080"
 		}
-		return hub.New(password).Run(addr)
+		return hub.New(state.PasswordHash, state.AgentToken).Run(addr)
+	case "auth-init":
+		password := firstNonEmpty(os.Getenv("PORTAL_PASSWORD"), os.Getenv("PORTAL_TOKEN"))
+		state, err := ensureHubAuth(password)
+		if err != nil {
+			return err
+		}
+		if cfg, err := loadConfig(); err == nil {
+			cfg.Token = state.AgentToken
+			cfg.AuthVersion = 2
+			if err := saveConfig(cfg); err != nil {
+				return err
+			}
+		}
+		return nil
 	case "daemon":
 		cfg, err := loadConfig()
 		if err != nil {
@@ -181,13 +195,17 @@ func interactiveSetup() (config, error) {
 		host = strings.TrimSpace(raw)
 	}
 	secret := strings.TrimSpace(string(password))
-	cfg := config{URL: url, Token: auth.AgentToken(secret), Host: host}
-	if cfg.URL == "" || secret == "" || cfg.Host == "" {
+	if url == "" || secret == "" || host == "" {
 		return config{}, errors.New("URL, password, and host are required")
 	}
-	if !validHostAlias(cfg.Host) {
+	if !validHostAlias(host) {
 		return config{}, errors.New("host name may contain only letters, digits, _, and -")
 	}
+	token, err := enrollAgent(url, secret)
+	if err != nil {
+		return config{}, err
+	}
+	cfg := config{URL: url, Token: token, Host: host, AuthVersion: 2}
 	if err := saveConfig(cfg); err != nil {
 		return config{}, err
 	}
@@ -197,9 +215,7 @@ func interactiveSetup() (config, error) {
 
 func link(args []string) error {
 	cfg := config{Token: os.Getenv("PORTAL_TOKEN")}
-	if password := os.Getenv("PORTAL_PASSWORD"); password != "" {
-		cfg.Token = auth.AgentToken(password)
-	}
+	password := os.Getenv("PORTAL_PASSWORD")
 	if h, err := os.Hostname(); err == nil {
 		cfg.Host = h
 	}
@@ -210,7 +226,7 @@ func link(args []string) error {
 			if i >= len(args) {
 				return errors.New("--password requires a value")
 			}
-			cfg.Token = auth.AgentToken(args[i])
+			password = args[i]
 		case "--token":
 			i++
 			if i >= len(args) {
@@ -236,8 +252,18 @@ func link(args []string) error {
 	if cfg.URL == "" {
 		cfg.URL = strings.TrimRight(os.Getenv("PORTAL_URL"), "/")
 	}
-	if cfg.URL == "" || cfg.Token == "" {
+	if cfg.URL == "" {
 		return errors.New("usage: portal link https://portal.example.com --password PASSWORD")
+	}
+	if cfg.Token == "" {
+		if password == "" {
+			return errors.New("Portal password is required for enrollment")
+		}
+		token, err := enrollAgent(cfg.URL, password)
+		if err != nil {
+			return err
+		}
+		cfg.Token = token
 	}
 	if cfg.Host == "" {
 		return errors.New("could not determine host name; pass --host NAME")
@@ -245,6 +271,7 @@ func link(args []string) error {
 	if !validHostAlias(cfg.Host) {
 		return errors.New("host name may contain only letters, digits, _, and -")
 	}
+	cfg.AuthVersion = 2
 	if err := saveConfig(cfg); err != nil {
 		return err
 	}
@@ -415,9 +442,6 @@ func logPath() string    { return filepath.Join(configDir(), "daemon.log") }
 
 func loadConfig() (config, error) {
 	cfg := config{URL: strings.TrimRight(os.Getenv("PORTAL_URL"), "/"), Token: os.Getenv("PORTAL_TOKEN"), Host: os.Getenv("PORTAL_HOST")}
-	if password := os.Getenv("PORTAL_PASSWORD"); password != "" {
-		cfg.Token = auth.AgentToken(password)
-	}
 	data, err := os.ReadFile(configPath())
 	if err == nil {
 		var fileCfg config
@@ -433,6 +457,7 @@ func loadConfig() (config, error) {
 		if cfg.Host == "" {
 			cfg.Host = fileCfg.Host
 		}
+		cfg.AuthVersion = fileCfg.AuthVersion
 	} else if !os.IsNotExist(err) {
 		return cfg, err
 	}
