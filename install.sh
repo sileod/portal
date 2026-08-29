@@ -210,13 +210,15 @@ case "$mode" in
             esac
         fi
 
+        prompt "Hub name [portal] (used in URL and tabs): "
+        hub_name="${REPLY:-portal}"
         choose_new_password
         say ""
         say "Creating public Portal URL with Tailscale Funnel..."
         if [ -n "$key" ]; then
-            TAILSCALE_AUTHKEY="$key" PORTAL_PASSWORD="$password" "$BIN" expose tailscale
+            TAILSCALE_AUTHKEY="$key" PORTAL_FUNNEL_HOST="$hub_name" PORTAL_HOST="$hub_name" PORTAL_PASSWORD="$password" "$BIN" expose tailscale
         else
-            PORTAL_PASSWORD="$password" "$BIN" expose tailscale
+            PORTAL_FUNNEL_HOST="$hub_name" PORTAL_HOST="$hub_name" PORTAL_PASSWORD="$password" "$BIN" expose tailscale
         fi
         say ""
         say "Open the printed URL from any browser and enter your Portal password."
@@ -225,13 +227,16 @@ case "$mode" in
     2)
         prompt "Existing Portal URL: "
         url="$REPLY"
+        default_host="$(hostname 2>/dev/null || printf host)"
+        prompt "Portal host name [$default_host]: "
+        host_name="${REPLY:-$default_host}"
         secret "Portal password: "
         password="$REPLY"
-        if [ -z "$url" ] || [ -z "$password" ]; then
-            say "Portal URL and password are required."
+        if [ -z "$url" ] || [ -z "$password" ] || [ -z "$host_name" ]; then
+            say "Portal URL, host name, and password are required."
             exit 1
         fi
-        PORTAL_PASSWORD="$password" "$BIN" link "$url"
+        PORTAL_PASSWORD="$password" "$BIN" link "$url" --host "$host_name"
         say ""
         say "Joined. This host connects outbound to the existing Portal; Tailscale is not required here."
         ;;
