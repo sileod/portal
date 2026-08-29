@@ -55,7 +55,7 @@ func New(password string) *Server {
 		browserSession: hex.EncodeToString(mac.Sum(nil)),
 		agents:         map[string]*agentConn{},
 		routes:         map[string]*browserConn{},
-		upgrader: websocket.Upgrader{CheckOrigin: sameOrigin},
+		upgrader:       websocket.Upgrader{CheckOrigin: sameOrigin},
 	}
 }
 
@@ -194,11 +194,16 @@ func (s *Server) handleSessions(w http.ResponseWriter, _ *http.Request) {
 }
 
 type sessionActionRequest struct {
-	Action  string `json:"action"`
-	Host    string `json:"host"`
-	Session string `json:"session"`
-	Delay   string `json:"delay,omitempty"`
-	Text    string `json:"text,omitempty"`
+	Action   string `json:"action"`
+	Host     string `json:"host,omitempty"`
+	Session  string `json:"session,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Command  string `json:"command,omitempty"`
+	Delay    string `json:"delay,omitempty"`
+	Text     string `json:"text,omitempty"`
+	Repeat   int    `json:"repeat,omitempty"`
+	Interval string `json:"interval,omitempty"`
+	Value    string `json:"value,omitempty"`
 }
 
 func (s *Server) handleSessionAction(w http.ResponseWriter, r *http.Request) {
@@ -215,13 +220,76 @@ func (s *Server) handleSessionAction(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	if req.Host == "" || req.Session == "" {
-		http.Error(w, "host and session required", http.StatusBadRequest)
+
+	if req.Action == "status_color" {
+		if !validHexColor(req.Value) {
+			http.Error(w, "status color must be #RRGGBB", http.StatusBadRequest)
+			return
+		}
+		s.mu.RLock()
+		targets := make([]*agentConn, 0, len(s.agents))
+		for host, a := range s.agents {
+			if req.Host == "" || req.Host == host {
+				targets = append(targets, a)
+			}
+		}
+		s.mu.RUnlock()
+		if len(targets) == 0 {
+			http.Error(w, "host not found", http.StatusNotFound)
+			return
+		}
+		for _, a := range targets {
+			if err := s.writeAgent(a, protocol.Message{Type: "status_color", Value: req.Value}); err != nil {
+				http.Error(w, "host disconnected", http.StatusBadGateway)
+				return
+			}
+		}
+		writeAccepted(w)
+		return
+	}
+
+	if req.Host == "" {
+		http.Error(w, "host required", http.StatusBadRequest)
 		return
 	}
 	s.mu.RLock()
 	a := s.agents[req.Host]
-	found := a != nil && containsString(a.sessions, req.Session)
+	s.mu.RUnlock()
+	if a == nil {
+		http.Error(w, "host not found", http.StatusNotFound)
+		return
+	}
+
+	if req.Action == "create" {
+		if !validSessionName(req.Name) {
+			http.Error(w, "invalid session name", http.StatusBadRequest)
+			return
+		}
+		if req.Command != "" && (len(req.Command) > 4096 || strings.ContainsAny(req.Command, "\r\n")) {
+			http.Error(w, "command must be one line up to 4096 bytes", http.StatusBadRequest)
+			return
+		}
+		s.mu.RLock()
+		exists := containsString(a.sessions, req.Name)
+		s.mu.RUnlock()
+		if exists {
+			http.Error(w, "session already exists", http.StatusConflict)
+			return
+		}
+		if err := s.writeAgent(a, protocol.Message{Type: "create_session", Name: req.Name, Command: req.Command}); err != nil {
+			http.Error(w, "host disconnected", http.StatusBadGateway)
+			return
+		}
+		writeAccepted(w)
+		return
+	}
+
+	if req.Session == "" {
+		http.Error(w, "session required", http.StatusBadRequest)
+		return
+	}
+	s.mu.RLock()
+	found := containsString(a.sessions, req.Session)
 	s.mu.RUnlock()
 	if !found {
 		http.Error(w, "session not found", http.StatusNotFound)
@@ -232,6 +300,19 @@ func (s *Server) handleSessionAction(w http.ResponseWriter, r *http.Request) {
 	switch req.Action {
 	case "kill":
 		m = protocol.Message{Type: "kill_session", Session: req.Session}
+	case "rename":
+		if !validSessionName(req.Name) {
+			http.Error(w, "invalid session name", http.StatusBadRequest)
+			return
+		}
+		s.mu.RLock()
+		exists := containsString(a.sessions, req.Name)
+		s.mu.RUnlock()
+		if exists {
+			http.Error(w, "session already exists", http.StatusConflict)
+			return
+		}
+		m = protocol.Message{Type: "rename_session", Session: req.Session, Name: req.Name}
 	case "schedule":
 		delay, err := time.ParseDuration(strings.TrimSpace(req.Delay))
 		if err != nil || delay < time.Second || delay > 30*24*time.Hour {
@@ -242,7 +323,23 @@ func (s *Server) handleSessionAction(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "message must be one non-empty line up to 4096 bytes", http.StatusBadRequest)
 			return
 		}
-		m = protocol.Message{Type: "schedule_input", Session: req.Session, Text: req.Text, DelaySeconds: int64(delay / time.Second)}
+		repeat := req.Repeat
+		if repeat == 0 {
+			repeat = 1
+		}
+		if repeat < 1 || repeat > 100 {
+			http.Error(w, "repeat must be between 1 and 100", http.StatusBadRequest)
+			return
+		}
+		var interval time.Duration
+		if repeat > 1 {
+			interval, err = time.ParseDuration(strings.TrimSpace(req.Interval))
+			if err != nil || interval < time.Second || interval > 30*24*time.Hour {
+				http.Error(w, "repeat interval must be between 1s and 720h", http.StatusBadRequest)
+				return
+			}
+		}
+		m = protocol.Message{Type: "schedule_input", Session: req.Session, Text: req.Text, DelaySeconds: int64(delay / time.Second), Repeat: repeat, IntervalSeconds: int64(interval / time.Second)}
 	default:
 		http.Error(w, "unknown action", http.StatusBadRequest)
 		return
@@ -251,9 +348,37 @@ func (s *Server) handleSessionAction(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "host disconnected", http.StatusBadGateway)
 		return
 	}
+	writeAccepted(w)
+}
+
+func writeAccepted(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	fmt.Fprint(w, `{"ok":true}`)
+}
+
+func validSessionName(name string) bool {
+	if name == "" || len(name) > 80 {
+		return false
+	}
+	for _, r := range name {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+func validHexColor(value string) bool {
+	if len(value) != 7 || value[0] != '#' {
+		return false
+	}
+	for _, r := range value[1:] {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 func containsString(items []string, want string) bool {
