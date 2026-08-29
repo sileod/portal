@@ -48,6 +48,18 @@ install_asset() {
     return 1
 }
 
+build_current_main() {
+    src="$TMP/portal-main.tar.gz"
+    curl -fL "https://github.com/$REPO/archive/refs/heads/main.tar.gz" -o "$src"
+    tar -xzf "$src" -C "$TMP"
+    say "No prebuilt Portal binary published yet; building current main with the Go already installed on this machine."
+    (
+        cd "$TMP/portal-main"
+        GOTOOLCHAIN=local go build -o "$TMP/portal" ./cmd/portal
+    )
+    install -m 0755 "$TMP/portal" "$BIN"
+}
+
 install_portal() {
     tag="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1 || true)"
     if install_asset "$tag" || install_asset edge; then
@@ -55,15 +67,12 @@ install_portal() {
     fi
 
     if command -v go >/dev/null 2>&1; then
-        say "No prebuilt Portal binary published yet; building with the Go already installed on this machine."
-        GOBIN="$TMP/bin" go install "github.com/$REPO/cmd/portal@latest"
-        install -m 0755 "$TMP/bin/portal" "$BIN"
+        build_current_main
         return
     fi
 
     say "No prebuilt Portal binary is published yet for $OS/$ARCH."
-    say "Portal does not install Go as a runtime or installer dependency."
-    say "A maintainer needs to publish the edge release, then this installer will be binary-only."
+    say "Portal will not install Go. Publish the edge release, then rerun this installer."
     exit 1
 }
 
