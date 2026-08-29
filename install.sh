@@ -31,6 +31,8 @@ case "$OS" in
 esac
 
 mkdir -p "$INSTALL_DIR"
+PATH="$INSTALL_DIR:$PATH"
+export PATH
 BIN="$INSTALL_DIR/portal"
 
 install_portal() {
@@ -134,7 +136,7 @@ case "$choice" in
         ;;
 esac
 
-case ":$PATH:" in
+case ":${PATH#"$INSTALL_DIR:"}:" in
     *":$INSTALL_DIR:"*) ;;
-    *) say "Add $INSTALL_DIR to PATH to run: portal" ;;
+    *) say "Add $INSTALL_DIR to PATH in future shells to run: portal" ;;
 esac
