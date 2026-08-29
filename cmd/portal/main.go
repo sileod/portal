@@ -233,25 +233,39 @@ func createSession(name string, command []string) error {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		return errors.New("tmux is required")
 	}
-	if exec.Command("tmux", "has-session", "-t", name).Run() == nil {
-		return nil
+	if exec.Command("tmux", "has-session", "-t", name).Run() != nil {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		args := []string{"new-session", "-d", "-s", name, "-c", cwd}
+		if len(command) > 0 {
+			args = append(args, shellCommand(command))
+		}
+		cmd := exec.Command("tmux", args...)
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+		if err := cmd.Run(); err != nil {
+			return err
+		}
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	args := []string{"new-session", "-d", "-s", name, "-c", cwd}
-	if len(command) > 0 {
-		args = append(args, shellCommand(command))
-	}
-	cmd := exec.Command("tmux", args...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	return cmd.Run()
+	return markPortalSession(name)
+}
+
+func markPortalSession(name string) error {
+	return exec.Command("tmux", "set-option", "-t", name, "@portal", "1").Run()
+}
+
+func isPortalSession(name string) bool {
+	out, err := exec.Command("tmux", "show-option", "-qv", "-t", name, "@portal").Output()
+	return err == nil && strings.TrimSpace(string(out)) == "1"
 }
 
 func killSession(name string) error {
 	if !validName(name) {
 		return errors.New("invalid session name")
+	}
+	if !isPortalSession(name) {
+		return errors.New("not a Portal-managed session")
 	}
 	cmd := exec.Command("tmux", "kill-session", "-t", name)
 	cmd.Stderr = os.Stderr
