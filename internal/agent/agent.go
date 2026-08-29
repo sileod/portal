@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -18,6 +19,8 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/sileod/portal/internal/protocol"
 )
+
+const controlCapability = "controls-v1"
 
 type Config struct {
 	URL   string
@@ -70,7 +73,7 @@ func runOnce(cfg Config) error {
 		c.closeAll()
 		ws.Close()
 	}()
-	if err := c.write(protocol.Message{Type: "hello", Host: cfg.Host, Sessions: Sessions()}); err != nil {
+	if err := c.write(protocol.Message{Type: "hello", Host: cfg.Host, Sessions: Sessions(), Capabilities: []string{controlCapability}}); err != nil {
 		return err
 	}
 	log.Printf("connected to %s as %s", cfg.URL, cfg.Host)
@@ -92,15 +95,15 @@ func runOnce(cfg Config) error {
 		case "close":
 			c.close(m.ID)
 		case "kill_session":
-			c.killSession(m.Session)
+			c.finishAction(m.ID, c.killSession(m.Session), true)
 		case "rename_session":
-			c.renameSession(m.Session, m.Name)
+			c.finishAction(m.ID, c.renameSession(m.Session, m.Name), true)
 		case "create_session":
-			c.createSession(m.Name, m.Command)
+			c.finishAction(m.ID, c.createSession(m.Name, m.Command), true)
 		case "schedule_input":
-			c.scheduleInput(m.Session, m.Text, m.DelaySeconds, m.Repeat, m.IntervalSeconds)
+			c.finishAction(m.ID, c.scheduleInput(m.Session, m.Text, m.DelaySeconds, m.Repeat, m.IntervalSeconds), false)
 		case "status_color":
-			c.setStatusColor(m.Value)
+			c.finishAction(m.ID, c.setStatusColor(m.Value), false)
 		}
 	}
 }
@@ -129,6 +132,20 @@ func (c *connection) write(m protocol.Message) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 	return c.ws.WriteJSON(m)
+}
+
+func (c *connection) finishAction(id string, err error, publish bool) {
+	if err == nil && publish {
+		_ = c.write(protocol.Message{Type: "sessions", Sessions: Sessions()})
+	}
+	if id == "" {
+		return
+	}
+	result := protocol.Message{Type: "action_result", ID: id}
+	if err != nil {
+		result.Error = err.Error()
+	}
+	_ = c.write(result)
 }
 
 func (c *connection) publishSessions(done <-chan struct{}) {
@@ -242,65 +259,87 @@ func (c *connection) closeAll() {
 	}
 }
 
-func (c *connection) killSession(session string) {
+func (c *connection) killSession(session string) error {
 	if !contains(Sessions(), session) {
-		return
+		return errors.New("Portal session not found")
 	}
-	if out, err := exec.Command("tmux", "kill-session", "-t", "="+session).CombinedOutput(); err != nil {
-		log.Printf("kill session %s: %v: %s", session, err, strings.TrimSpace(string(out)))
+	out, err := exec.Command("tmux", "kill-session", "-t", "="+session).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("tmux kill-session: %s", commandError(err, out))
 	}
+	return nil
 }
 
-func (c *connection) renameSession(session, name string) {
-	if !contains(Sessions(), session) || !validSessionName(name) || contains(Sessions(), name) {
-		return
+func (c *connection) renameSession(session, name string) error {
+	if !contains(Sessions(), session) {
+		return errors.New("Portal session not found")
 	}
-	if out, err := exec.Command("tmux", "rename-session", "-t", "="+session, name).CombinedOutput(); err != nil {
-		log.Printf("rename session %s: %v: %s", session, err, strings.TrimSpace(string(out)))
+	if !validSessionName(name) {
+		return errors.New("invalid session name")
 	}
+	if contains(Sessions(), name) {
+		return errors.New("session already exists")
+	}
+	out, err := exec.Command("tmux", "rename-session", "-t", "="+session, name).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("tmux rename-session: %s", commandError(err, out))
+	}
+	return nil
 }
 
-func (c *connection) createSession(name, command string) {
-	if !validSessionName(name) || contains(Sessions(), name) {
-		return
+func (c *connection) createSession(name, command string) error {
+	if !validSessionName(name) {
+		return errors.New("invalid session name")
+	}
+	if contains(Sessions(), name) {
+		return errors.New("session already exists")
 	}
 	args := []string{"new-session", "-d", "-s", name}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
 		args = append(args, "-c", home)
 	}
-	if out, err := exec.Command("tmux", args...).CombinedOutput(); err != nil {
-		log.Printf("create session %s: %v: %s", name, err, strings.TrimSpace(string(out)))
-		return
+	out, err := exec.Command("tmux", args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("tmux new-session: %s", commandError(err, out))
 	}
-	exec.Command("tmux", "set-option", "-t", "="+name, "@portal", "1").Run()
-	applyPortalStatusColor(name)
-	if command != "" && !strings.ContainsAny(command, "\r\n") {
-		exec.Command("tmux", "send-keys", "-t", "="+name, "-l", "--", command).Run()
-		exec.Command("tmux", "send-keys", "-t", "="+name, "Enter").Run()
+	if out, err := exec.Command("tmux", "set-option", "-t", "="+name, "@portal", "1").CombinedOutput(); err != nil {
+		_ = exec.Command("tmux", "kill-session", "-t", "="+name).Run()
+		return fmt.Errorf("mark Portal session: %s", commandError(err, out))
 	}
+	if err := applyPortalStatusColor(name); err != nil {
+		log.Printf("apply status color to %s: %v", name, err)
+	}
+	if command != "" {
+		if strings.ContainsAny(command, "\r\n") {
+			return errors.New("command must be one line")
+		}
+		if out, err := exec.Command("tmux", "send-keys", "-t", "="+name, "-l", "--", command).CombinedOutput(); err != nil {
+			return fmt.Errorf("tmux send command: %s", commandError(err, out))
+		}
+		if out, err := exec.Command("tmux", "send-keys", "-t", "="+name, "Enter").CombinedOutput(); err != nil {
+			return fmt.Errorf("tmux send Enter: %s", commandError(err, out))
+		}
+	}
+	return nil
 }
 
-func (c *connection) scheduleInput(session, text string, delaySeconds int64, repeat int, intervalSeconds int64) {
+func (c *connection) scheduleInput(session, text string, delaySeconds int64, repeat int, intervalSeconds int64) error {
 	if delaySeconds <= 0 || text == "" || strings.ContainsAny(text, "\r\n") || !contains(Sessions(), session) {
-		return
+		return errors.New("invalid scheduled input")
 	}
 	if repeat <= 0 {
 		repeat = 1
 	}
-	if repeat > 100 {
-		return
-	}
-	if repeat > 1 && intervalSeconds <= 0 {
-		return
+	if repeat > 100 || (repeat > 1 && intervalSeconds <= 0) {
+		return errors.New("invalid repeat settings")
 	}
 	paneOut, err := exec.Command("tmux", "display-message", "-p", "-t", "="+session, "#{pane_id}").Output()
 	if err != nil {
-		log.Printf("schedule input for %s: could not resolve pane: %v", session, err)
-		return
+		return fmt.Errorf("resolve tmux pane: %w", err)
 	}
 	pane := strings.TrimSpace(string(paneOut))
 	if pane == "" {
-		return
+		return errors.New("could not resolve tmux pane")
 	}
 	script := fmt.Sprintf(
 		"sleep %d; i=1; while [ $i -le %d ]; do tmux send-keys -t %s -l -- %s; tmux send-keys -t %s Enter; i=$((i+1)); if [ $i -le %d ]; then sleep %d; fi; done",
@@ -312,31 +351,55 @@ func (c *connection) scheduleInput(session, text string, delaySeconds int64, rep
 		repeat,
 		intervalSeconds,
 	)
-	if out, err := exec.Command("tmux", "run-shell", "-b", script).CombinedOutput(); err != nil {
-		log.Printf("schedule input for %s: %v: %s", session, err, strings.TrimSpace(string(out)))
+	out, err := exec.Command("tmux", "run-shell", "-b", script).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("tmux schedule: %s", commandError(err, out))
 	}
+	return nil
 }
 
-func (c *connection) setStatusColor(value string) {
+func (c *connection) setStatusColor(value string) error {
 	if !validHexColor(value) {
-		return
+		return errors.New("invalid status color")
 	}
-	exec.Command("tmux", "set-option", "-g", "@portal_status_bg", value).Run()
+	if out, err := exec.Command("tmux", "set-option", "-g", "@portal_status_bg", value).CombinedOutput(); err != nil {
+		return fmt.Errorf("save tmux status color: %s", commandError(err, out))
+	}
 	for _, session := range Sessions() {
-		applyPortalStatusColor(session)
+		if err := applyPortalStatusColor(session); err != nil {
+			return fmt.Errorf("apply status color to %s: %w", session, err)
+		}
 	}
+	return nil
 }
 
-func applyPortalStatusColor(session string) {
+func applyPortalStatusColor(session string) error {
 	out, err := exec.Command("tmux", "show-option", "-gqv", "@portal_status_bg").Output()
 	if err != nil {
-		return
+		return nil
 	}
 	color := strings.TrimSpace(string(out))
 	if !validHexColor(color) {
-		return
+		return nil
 	}
-	exec.Command("tmux", "set-option", "-t", "="+session, "status-style", "bg="+color).Run()
+	style := "bg=" + color
+	for _, option := range []string{"status-style", "status-left-style", "status-right-style", "window-status-style", "window-status-current-style"} {
+		if out, err := exec.Command("tmux", "set-option", "-t", "="+session, option, style).CombinedOutput(); err != nil {
+			return fmt.Errorf("%s: %s", option, commandError(err, out))
+		}
+	}
+	// status-bg is an older alias still understood by common tmux releases.
+	// Keep it as a best-effort compatibility nudge for configs using legacy status options.
+	_ = exec.Command("tmux", "set-option", "-t", "="+session, "status-bg", color).Run()
+	return nil
+}
+
+func commandError(err error, out []byte) string {
+	text := strings.TrimSpace(string(out))
+	if text != "" {
+		return text
+	}
+	return err.Error()
 }
 
 func validHexColor(s string) bool {
