@@ -10,8 +10,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-
-	"github.com/sileod/portal/internal/auth"
 )
 
 const hubPort = 8080
@@ -109,7 +107,7 @@ func exposeTailscale(args []string) error {
 			return err
 		}
 	}
-	return finishExpose(url, password, "Tailscale Funnel", portalHost)
+	return finishExpose(url, "Tailscale Funnel", portalHost)
 }
 
 func exposeCloudflare(args []string) error {
@@ -159,7 +157,7 @@ func exposeCloudflare(args []string) error {
 	if err := ensureCloudflared(key); err != nil {
 		return err
 	}
-	return finishExpose(url, password, "Cloudflare Tunnel", portalHost)
+	return finishExpose(url, "Cloudflare Tunnel", portalHost)
 }
 
 func tailscaleUpInteractive() error {
@@ -235,6 +233,9 @@ func waitTailscaleURL(hostname string) (string, error) {
 }
 
 func ensureHub(password string) error {
+	if _, err := ensureHubAuth(password); err != nil {
+		return err
+	}
 	if processRunning(hubPIDPath()) {
 		return nil
 	}
@@ -246,7 +247,7 @@ func ensureHub(password string) error {
 		return err
 	}
 	cmd := exec.Command(os.Args[0], "hub")
-	cmd.Env = append(os.Environ(), "PORTAL_PASSWORD="+password, fmt.Sprintf("PORTAL_ADDR=127.0.0.1:%d", hubPort))
+	cmd.Env = append(os.Environ(), fmt.Sprintf("PORTAL_ADDR=127.0.0.1:%d", hubPort))
 	cmd.Stdin = nil
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -288,8 +289,12 @@ func ensureCloudflared(key string) error {
 	return os.WriteFile(cloudflarePIDPath(), []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0600)
 }
 
-func finishExpose(url, password, provider, host string) error {
-	cfg := config{URL: strings.TrimRight(url, "/"), Token: auth.AgentToken(password), Host: host}
+func finishExpose(url, provider, host string) error {
+	state, err := loadHubAuth()
+	if err != nil {
+		return err
+	}
+	cfg := config{URL: strings.TrimRight(url, "/"), Token: state.AgentToken, Host: host, AuthVersion: 2}
 	if err := saveConfig(cfg); err != nil {
 		return err
 	}
