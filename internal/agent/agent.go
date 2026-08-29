@@ -22,7 +22,10 @@ import (
 	"github.com/sileod/portal/internal/protocol"
 )
 
-const controlCapability = "controls-v1"
+const (
+	controlCapability   = "controls-v1"
+	scheduleIndexOption = "@portal_schedule_ids"
+)
 
 type Config struct {
 	URL   string
@@ -36,10 +39,11 @@ type terminal struct {
 }
 
 type connection struct {
-	ws        *websocket.Conn
-	writeMu   sync.Mutex
-	termMu    sync.Mutex
-	terminals map[string]*terminal
+	ws         *websocket.Conn
+	writeMu    sync.Mutex
+	termMu     sync.Mutex
+	scheduleMu sync.Mutex
+	terminals  map[string]*terminal
 }
 
 func Run(cfg Config) error {
@@ -357,7 +361,7 @@ func (c *connection) scheduleInput(session, text string, delaySeconds int64, rep
 	}
 	now := time.Now().Unix()
 	id := fmt.Sprintf("%x", time.Now().UnixNano())
-	option := "@portal_schedule_" + id
+	option := scheduleOption(id)
 	schedule := protocol.Schedule{
 		ID:              id,
 		Session:         session,
@@ -368,12 +372,8 @@ func (c *connection) scheduleInput(session, text string, delaySeconds int64, rep
 		Repeat:          repeat,
 		IntervalSeconds: intervalSeconds,
 	}
-	data, err := json.Marshal(schedule)
-	if err != nil {
+	if err := c.saveSchedule(schedule); err != nil {
 		return err
-	}
-	if out, err := exec.Command("tmux", "set-option", "-g", option, string(data)).CombinedOutput(); err != nil {
-		return fmt.Errorf("save scheduled input: %s", commandError(err, out))
 	}
 	script := fmt.Sprintf(
 		"sleep %d; i=1; while [ $i -le %d ]; do tmux send-keys -t %s -l -- %s && tmux send-keys -t %s Enter || break; i=$((i+1)); if [ $i -le %d ]; then sleep %d; fi; done; tmux set-option -gu %s",
@@ -390,6 +390,28 @@ func (c *connection) scheduleInput(session, text string, delaySeconds int64, rep
 	if err != nil {
 		_ = exec.Command("tmux", "set-option", "-gu", option).Run()
 		return fmt.Errorf("tmux schedule: %s", commandError(err, out))
+	}
+	return nil
+}
+
+func (c *connection) saveSchedule(schedule protocol.Schedule) error {
+	data, err := json.Marshal(schedule)
+	if err != nil {
+		return err
+	}
+	option := scheduleOption(schedule.ID)
+	c.scheduleMu.Lock()
+	defer c.scheduleMu.Unlock()
+	if out, err := exec.Command("tmux", "set-option", "-g", option, string(data)).CombinedOutput(); err != nil {
+		return fmt.Errorf("save scheduled input: %s", commandError(err, out))
+	}
+	ids := scheduleIDs()
+	if !contains(ids, schedule.ID) {
+		ids = append(ids, schedule.ID)
+	}
+	if err := writeScheduleIDs(ids); err != nil {
+		_ = exec.Command("tmux", "set-option", "-gu", option).Run()
+		return err
 	}
 	return nil
 }
@@ -469,47 +491,109 @@ func shellQuote(s string) string {
 }
 
 func sessionInfos() ([]string, []protocol.Session) {
-	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}\t#{@portal}\t#{session_activity}").Output()
+	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}\t#{@portal}").Output()
 	if err != nil {
 		return nil, nil
 	}
+	managed := map[string]bool{}
 	var names []string
-	var infos []protocol.Session
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		parts := strings.SplitN(line, "\t", 3)
-		if len(parts) < 2 || parts[1] != "1" || parts[0] == "" {
-			continue
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) == 2 && parts[1] == "1" && parts[0] != "" {
+			managed[parts[0]] = true
+			names = append(names, parts[0])
 		}
-		activity := int64(0)
-		if len(parts) == 3 {
-			activity, _ = strconv.ParseInt(parts[2], 10, 64)
+	}
+	activity := map[string]int64{}
+	if windows, err := exec.Command("tmux", "list-windows", "-a", "-F", "#{session_name}\t#{window_activity}").Output(); err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(string(windows)), "\n") {
+			parts := strings.SplitN(line, "\t", 2)
+			if len(parts) != 2 || !managed[parts[0]] {
+				continue
+			}
+			ts, _ := strconv.ParseInt(parts[1], 10, 64)
+			if ts > activity[parts[0]] {
+				activity[parts[0]] = ts
+			}
 		}
-		names = append(names, parts[0])
-		infos = append(infos, protocol.Session{Session: parts[0], LastActivity: activity})
+	}
+	var infos []protocol.Session
+	for _, name := range names {
+		infos = append(infos, protocol.Session{Session: name, LastActivity: activity[name]})
 	}
 	sort.Strings(names)
 	sort.Slice(infos, func(i, j int) bool { return infos[i].Session < infos[j].Session })
 	return names, infos
 }
 
-func pendingSchedules() []protocol.Schedule {
-	out, err := exec.Command("tmux", "show-options", "-g").Output()
+func scheduleOption(id string) string {
+	return "@portal_schedule_" + id
+}
+
+func validScheduleID(id string) bool {
+	if id == "" || len(id) > 64 {
+		return false
+	}
+	for _, r := range id {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
+func scheduleIDs() []string {
+	out, err := exec.Command("tmux", "show-options", "-gqv", scheduleIndexOption).Output()
 	if err != nil {
 		return nil
 	}
-	now := time.Now().Unix()
+	var ids []string
+	seen := map[string]bool{}
+	for _, id := range strings.FieldsFunc(strings.TrimSpace(string(out)), func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t' || r == '\n'
+	}) {
+		if validScheduleID(id) && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+func writeScheduleIDs(ids []string) error {
+	clean := make([]string, 0, len(ids))
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if validScheduleID(id) && !seen[id] {
+			seen[id] = true
+			clean = append(clean, id)
+		}
+	}
+	if len(clean) == 0 {
+		_ = exec.Command("tmux", "set-option", "-gu", scheduleIndexOption).Run()
+		return nil
+	}
+	if out, err := exec.Command("tmux", "set-option", "-g", scheduleIndexOption, strings.Join(clean, ",")).CombinedOutput(); err != nil {
+		return fmt.Errorf("save schedule index: %s", commandError(err, out))
+	}
+	return nil
+}
+
+func pendingSchedules() []protocol.Schedule {
+	ids := scheduleIDs()
+	if len(ids) == 0 {
+		return nil
+	}
 	var schedules []protocol.Schedule
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if !strings.HasPrefix(line, "@portal_schedule_") {
+	live := make([]string, 0, len(ids))
+	for _, id := range ids {
+		option := scheduleOption(id)
+		raw, err := exec.Command("tmux", "show-options", "-gqv", option).Output()
+		if err != nil {
 			continue
 		}
-		parts := strings.SplitN(line, " ", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		option := parts[0]
 		var schedule protocol.Schedule
-		if json.Unmarshal([]byte(parts[1]), &schedule) != nil || schedule.ID == "" || schedule.Pane == "" {
+		if json.Unmarshal([]byte(strings.TrimSpace(string(raw))), &schedule) != nil || schedule.ID != id || schedule.Pane == "" {
 			continue
 		}
 		current, paneErr := exec.Command("tmux", "display-message", "-p", "-t", schedule.Pane, "#{session_name}").Output()
@@ -518,15 +602,11 @@ func pendingSchedules() []protocol.Schedule {
 			continue
 		}
 		schedule.Session = strings.TrimSpace(string(current))
-		lastAt := schedule.FirstAt
-		if schedule.Repeat > 1 {
-			lastAt += int64(schedule.Repeat-1) * schedule.IntervalSeconds
-		}
-		if lastAt > 0 && now > lastAt+300 {
-			_ = exec.Command("tmux", "set-option", "-gu", option).Run()
-			continue
-		}
+		live = append(live, id)
 		schedules = append(schedules, schedule)
+	}
+	if len(live) != len(ids) {
+		_ = writeScheduleIDs(live)
 	}
 	sort.Slice(schedules, func(i, j int) bool {
 		if schedules[i].FirstAt == schedules[j].FirstAt {
