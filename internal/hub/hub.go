@@ -23,17 +23,25 @@ import (
 	"github.com/sileod/portal/internal/webui"
 )
 
+const controlCapability = "controls-v1"
+
 type agentConn struct {
-	host     string
-	ws       *websocket.Conn
-	writeMu  sync.Mutex
-	sessions []string
+	host         string
+	ws           *websocket.Conn
+	writeMu      sync.Mutex
+	sessions     []string
+	capabilities []string
 }
 
 type browserConn struct {
 	host    string
 	ws      *websocket.Conn
 	writeMu sync.Mutex
+}
+
+type pendingAction struct {
+	host string
+	ch   chan protocol.Message
 }
 
 type Server struct {
@@ -43,6 +51,7 @@ type Server struct {
 	mu             sync.RWMutex
 	agents         map[string]*agentConn
 	routes         map[string]*browserConn
+	pending        map[string]pendingAction
 	upgrader       websocket.Upgrader
 }
 
@@ -55,6 +64,7 @@ func New(password string) *Server {
 		browserSession: hex.EncodeToString(mac.Sum(nil)),
 		agents:         map[string]*agentConn{},
 		routes:         map[string]*browserConn{},
+		pending:        map[string]pendingAction{},
 		upgrader:       websocket.Upgrader{CheckOrigin: sameOrigin},
 	}
 }
@@ -78,7 +88,7 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' ws: wss:; font-src 'self' data:")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' ws: wss:; font-src 'self' data:; img-src 'self' data:")
 		next.ServeHTTP(w, r)
 	})
 }
@@ -150,7 +160,7 @@ func loginPage(errText string) string {
 	if errText != "" {
 		errHTML = `<p class="error">` + errText + `</p>`
 	}
-	return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Portal</title><style>:root{color-scheme:light dark}*{box-sizing:border-box}body{margin:0;height:100vh;display:grid;place-items:center;font:14px ui-monospace,SFMono-Regular,Menlo,monospace}form{width:min(360px,calc(100vw - 40px))}h1{font-size:20px}input,button{width:100%;padding:12px;font:inherit;margin-top:8px}button{cursor:pointer}.error{color:#c33}</style></head><body><form method="post"><h1>Portal</h1><input name="password" type="password" autocomplete="current-password" autofocus placeholder="password"><button>Enter</button>` + errHTML + `</form></body></html>`
+	return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#111111"><link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌀</text></svg>"><title>Portal</title><style>:root{color-scheme:light dark}*{box-sizing:border-box}body{margin:0;height:100vh;display:grid;place-items:center;font:14px ui-monospace,SFMono-Regular,Menlo,monospace}form{width:min(360px,calc(100vw - 40px))}h1{font-size:20px}input,button{width:100%;padding:12px;font:inherit;margin-top:8px}button{cursor:pointer}.error{color:#c33}</style></head><body><form method="post"><h1>🌀 Portal</h1><input name="password" type="password" autocomplete="current-password" autofocus placeholder="password"><button>Enter</button>` + errHTML + `</form></body></html>`
 }
 
 func isSecure(r *http.Request) bool {
@@ -176,13 +186,16 @@ func bearerToken(r *http.Request) (string, bool) {
 func (s *Server) handleSessions(w http.ResponseWriter, _ *http.Request) {
 	s.mu.RLock()
 	list := make([]protocol.Session, 0)
+	hosts := make([]string, 0, len(s.agents))
 	for host, a := range s.agents {
+		hosts = append(hosts, host)
 		for _, session := range a.sessions {
 			list = append(list, protocol.Session{Host: host, Session: session})
 		}
 	}
 	hostCount := len(s.agents)
 	s.mu.RUnlock()
+	sort.Strings(hosts)
 	sort.Slice(list, func(i, j int) bool {
 		if list[i].Host == list[j].Host {
 			return list[i].Session < list[j].Session
@@ -190,7 +203,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, _ *http.Request) {
 		return list[i].Host < list[j].Host
 	})
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(protocol.SessionList{HostCount: hostCount, Sessions: list})
+	json.NewEncoder(w).Encode(protocol.SessionList{HostCount: hostCount, Hosts: hosts, Sessions: list})
 }
 
 type sessionActionRequest struct {
@@ -239,12 +252,16 @@ func (s *Server) handleSessionAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, a := range targets {
-			if err := s.writeAgent(a, protocol.Message{Type: "status_color", Value: req.Value}); err != nil {
-				http.Error(w, "host disconnected", http.StatusBadGateway)
+			if !hasCapability(a, controlCapability) {
+				http.Error(w, "update Portal on host "+a.host+" to use settings", http.StatusConflict)
+				return
+			}
+			if err := s.callAgent(a, protocol.Message{Type: "status_color", Value: req.Value}); err != nil {
+				http.Error(w, err.Error(), http.StatusBadGateway)
 				return
 			}
 		}
-		writeAccepted(w)
+		writeOK(w)
 		return
 	}
 
@@ -257,6 +274,10 @@ func (s *Server) handleSessionAction(w http.ResponseWriter, r *http.Request) {
 	s.mu.RUnlock()
 	if a == nil {
 		http.Error(w, "host not found", http.StatusNotFound)
+		return
+	}
+	if !hasCapability(a, controlCapability) {
+		http.Error(w, "update Portal on host "+a.host+" to use this control", http.StatusConflict)
 		return
 	}
 
@@ -276,11 +297,11 @@ func (s *Server) handleSessionAction(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "session already exists", http.StatusConflict)
 			return
 		}
-		if err := s.writeAgent(a, protocol.Message{Type: "create_session", Name: req.Name, Command: req.Command}); err != nil {
-			http.Error(w, "host disconnected", http.StatusBadGateway)
+		if err := s.callAgent(a, protocol.Message{Type: "create_session", Name: req.Name, Command: req.Command}); err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
-		writeAccepted(w)
+		writeOK(w)
 		return
 	}
 
@@ -344,16 +365,15 @@ func (s *Server) handleSessionAction(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown action", http.StatusBadRequest)
 		return
 	}
-	if err := s.writeAgent(a, m); err != nil {
-		http.Error(w, "host disconnected", http.StatusBadGateway)
+	if err := s.callAgent(a, m); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	writeAccepted(w)
+	writeOK(w)
 }
 
-func writeAccepted(w http.ResponseWriter) {
+func writeOK(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
 	fmt.Fprint(w, `{"ok":true}`)
 }
 
@@ -390,6 +410,10 @@ func containsString(items []string, want string) bool {
 	return false
 }
 
+func hasCapability(a *agentConn, capability string) bool {
+	return containsString(a.capabilities, capability)
+}
+
 func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 	token, ok := bearerToken(r)
 	if !ok || !constantEqual(token, s.agentToken) {
@@ -405,7 +429,7 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 	if err := ws.ReadJSON(&hello); err != nil || hello.Type != "hello" || hello.Host == "" {
 		return
 	}
-	a := &agentConn{host: hello.Host, ws: ws, sessions: hello.Sessions}
+	a := &agentConn{host: hello.Host, ws: ws, sessions: hello.Sessions, capabilities: append([]string(nil), hello.Capabilities...)}
 	s.mu.Lock()
 	old := s.agents[a.host]
 	s.agents[a.host] = a
@@ -427,6 +451,8 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 				a.sessions = append([]string(nil), m.Sessions...)
 			}
 			s.mu.Unlock()
+		case "action_result":
+			s.resolveAction(m)
 		case "output":
 			data, err := base64.StdEncoding.DecodeString(m.Data)
 			if err == nil {
@@ -435,6 +461,45 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 		case "error":
 			s.writeBrowser(m.ID, websocket.TextMessage, []byte("\r\n\x1b[31m[portal: "+m.Error+"]\x1b[0m\r\n"))
 		}
+	}
+}
+
+func (s *Server) callAgent(a *agentConn, m protocol.Message) error {
+	id := randomID()
+	m.ID = id
+	ch := make(chan protocol.Message, 1)
+	s.mu.Lock()
+	s.pending[id] = pendingAction{host: a.host, ch: ch}
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.pending, id)
+		s.mu.Unlock()
+	}()
+	if err := s.writeAgent(a, m); err != nil {
+		return fmt.Errorf("host %s disconnected", a.host)
+	}
+	select {
+	case result := <-ch:
+		if result.Error != "" {
+			return fmt.Errorf("%s: %s", a.host, result.Error)
+		}
+		return nil
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("host %s did not acknowledge action; update Portal on that host", a.host)
+	}
+}
+
+func (s *Server) resolveAction(m protocol.Message) {
+	s.mu.RLock()
+	p, ok := s.pending[m.ID]
+	s.mu.RUnlock()
+	if !ok {
+		return
+	}
+	select {
+	case p.ch <- m:
+	default:
 	}
 }
 
@@ -452,9 +517,21 @@ func (s *Server) removeAgent(a *agentConn) {
 			closeRoutes = append(closeRoutes, b)
 		}
 	}
+	var pending []chan protocol.Message
+	for _, p := range s.pending {
+		if p.host == a.host {
+			pending = append(pending, p.ch)
+		}
+	}
 	s.mu.Unlock()
 	for _, b := range closeRoutes {
 		b.ws.Close()
+	}
+	for _, ch := range pending {
+		select {
+		case ch <- protocol.Message{Error: "host disconnected"}:
+		default:
+		}
 	}
 	log.Printf("host disconnected: %s", a.host)
 }
