@@ -4,7 +4,7 @@ set -eu
 REPO="sileod/portal"
 INSTALL_DIR="${PORTAL_INSTALL_DIR:-$HOME/.local/bin}"
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT INT TERM
+trap 'stty echo 2>/dev/null || true; rm -rf "$TMP"' EXIT INT TERM
 
 say() { printf '%s\n' "$*"; }
 prompt() {
@@ -34,40 +34,37 @@ mkdir -p "$INSTALL_DIR"
 PATH="$INSTALL_DIR:$PATH"
 export PATH
 BIN="$INSTALL_DIR/portal"
+ASSET="portal_${OS}_${ARCH}.tar.gz"
 
-install_go() {
-    command -v go >/dev/null 2>&1 && return
-    prompt "No Portal release binary exists yet. Install Go to build it now? [Y/n] "
-    case "${REPLY:-y}" in
-        n|N) say "Cannot install Portal without a release binary or Go."; exit 1 ;;
-    esac
-    if command -v apt-get >/dev/null 2>&1; then
-        sudo apt-get update
-        sudo apt-get install -y golang-go
-    elif command -v brew >/dev/null 2>&1; then
-        brew install go
-    else
-        say "Install Go and rerun this installer."
-        exit 1
+install_asset() {
+    tag="$1"
+    [ -n "$tag" ] || return 1
+    url="https://github.com/$REPO/releases/download/$tag/$ASSET"
+    if curl -fL "$url" -o "$TMP/$ASSET" 2>/dev/null; then
+        tar -xzf "$TMP/$ASSET" -C "$TMP"
+        install -m 0755 "$TMP/portal" "$BIN"
+        return 0
     fi
+    return 1
 }
 
 install_portal() {
     tag="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1 || true)"
-    if [ -n "$tag" ]; then
-        asset="portal_${OS}_${ARCH}.tar.gz"
-        url="https://github.com/$REPO/releases/download/$tag/$asset"
-        if curl -fL "$url" -o "$TMP/$asset" 2>/dev/null; then
-            tar -xzf "$TMP/$asset" -C "$TMP"
-            install -m 0755 "$TMP/portal" "$BIN"
-            return
-        fi
+    if install_asset "$tag" || install_asset edge; then
+        return
     fi
 
-    install_go
-    say "Building Portal..."
-    GOBIN="$TMP/bin" go install "github.com/$REPO/cmd/portal@latest"
-    install -m 0755 "$TMP/bin/portal" "$BIN"
+    if command -v go >/dev/null 2>&1; then
+        say "No prebuilt Portal binary published yet; building with the Go already installed on this machine."
+        GOBIN="$TMP/bin" go install "github.com/$REPO/cmd/portal@latest"
+        install -m 0755 "$TMP/bin/portal" "$BIN"
+        return
+    fi
+
+    say "No prebuilt Portal binary is published yet for $OS/$ARCH."
+    say "Portal does not install Go as a runtime or installer dependency."
+    say "A maintainer needs to publish the edge release, then this installer will be binary-only."
+    exit 1
 }
 
 install_tmux() {
@@ -147,7 +144,7 @@ case "$choice" in
         ;;
 esac
 
-case ":${PATH#"$INSTALL_DIR:"}:" in
+case ":$PATH:" in
     *":$INSTALL_DIR:"*) ;;
-    *) say "Add $INSTALL_DIR to PATH in future shells to run: portal" ;;
+    *) say "Add $INSTALL_DIR to PATH to run: portal" ;;
 esac
