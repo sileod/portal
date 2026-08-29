@@ -95,64 +95,69 @@ install_tmux() {
 
 install_tailscale() {
     command -v tailscale >/dev/null 2>&1 && return
-    prompt "Tailscale is not installed. Install it using tailscale.com/install.sh? [Y/n] "
+    say "Portal uses Tailscale Funnel for its public HTTPS URL."
+    say "Only this host needs Tailscale; browsers opening Portal do not."
+    prompt "Install Tailscale using tailscale.com/install.sh? [Y/n] "
     case "${REPLY:-y}" in
-        n|N) say "Tailscale is required for this option."; exit 1 ;;
+        n|N) say "Tailscale is required for the default Funnel setup."; exit 1 ;;
     esac
     curl -fsSL https://tailscale.com/install.sh | sh
-}
-
-install_cloudflared() {
-    command -v cloudflared >/dev/null 2>&1 && return
-    if [ "$OS" = linux ]; then
-        say "Installing cloudflared..."
-        curl -fL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$ARCH" -o "$INSTALL_DIR/cloudflared"
-        chmod 0755 "$INSTALL_DIR/cloudflared"
-    else
-        say "cloudflared is required. Install it first (for example: brew install cloudflared)."
-        exit 1
-    fi
 }
 
 say "Installing Portal to $BIN"
 install_portal
 install_tmux
+install_tailscale
 say ""
-say "Expose the central Portal URL with:"
-say "  1) Tailscale Funnel (public HTTPS URL, Portal auth)"
-say "  2) Cloudflare Tunnel"
-say "  3) Not now"
-prompt "Choice [1]: "
-choice="${REPLY:-1}"
 
-case "$choice" in
-    1)
-        install_tailscale
-        secret "Tailscale auth key (leave blank if already connected): "
-        key="$REPLY"
-        if [ -n "$key" ]; then
-            TAILSCALE_AUTHKEY="$key" "$BIN" expose tailscale
-        else
-            "$BIN" expose tailscale
-        fi
-        ;;
-    2)
-        install_cloudflared
-        say "The Cloudflare tunnel must already route your public hostname to http://127.0.0.1:8080."
-        secret "Cloudflare tunnel token: "
-        key="$REPLY"
-        prompt "Public Portal URL (for example https://portal.example.com): "
-        url="$REPLY"
-        CLOUDFLARE_TUNNEL_TOKEN="$key" "$BIN" expose cloudflare --url "$url"
-        ;;
-    3)
-        say "Installed. Run: $BIN"
-        ;;
-    *)
-        say "Unknown choice: $choice"
-        exit 1
-        ;;
-esac
+key=""
+if ! tailscale status >/dev/null 2>&1; then
+    say "Tailscale is not connected on this host."
+    say "  1) Sign in in your browser (recommended)"
+    say "  2) Use a Tailscale auth key"
+    prompt "Choice [1]: "
+    case "${REPLY:-1}" in
+        1)
+            ;;
+        2)
+            say "Create the key in the Tailscale admin console. It is not your Portal password."
+            secret "Tailscale auth key (tskey-...): "
+            key="$REPLY"
+            case "$key" in
+                tskey-*) ;;
+                *) say "That does not look like a Tailscale-generated auth key (expected tskey-...)."; exit 1 ;;
+            esac
+            ;;
+        *)
+            say "Unknown choice."
+            exit 1
+            ;;
+    esac
+fi
+
+while :; do
+    secret "Choose Portal password: "
+    password="$REPLY"
+    if [ "${#password}" -lt 8 ]; then
+        say "Use at least 8 characters. This password protects a remote shell."
+        continue
+    fi
+    secret "Confirm Portal password: "
+    [ "$password" = "$REPLY" ] && break
+    say "Passwords did not match."
+done
+
+say ""
+say "Creating public Portal URL with Tailscale Funnel..."
+if [ -n "$key" ]; then
+    TAILSCALE_AUTHKEY="$key" PORTAL_PASSWORD="$password" "$BIN" expose tailscale
+else
+    PORTAL_PASSWORD="$password" "$BIN" expose tailscale
+fi
+
+say ""
+say "Open the printed URL from any browser and enter your Portal password."
+say "The viewing device does not need Tailscale."
 
 case ":$PATH:" in
     *":$INSTALL_DIR:"*) ;;
