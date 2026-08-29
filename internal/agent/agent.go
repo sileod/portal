@@ -178,7 +178,7 @@ func (c *connection) open(id, session string) {
 		return
 	}
 	c.close(id)
-	cmd := exec.Command("tmux", "attach-session", "-t", "="+session)
+	cmd := exec.Command("tmux", "attach-session", "-t", session)
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 120, Rows: 32})
 	if err != nil {
 		c.write(protocol.Message{Type: "error", ID: id, Error: err.Error()})
@@ -263,7 +263,7 @@ func (c *connection) killSession(session string) error {
 	if !contains(Sessions(), session) {
 		return errors.New("Portal session not found")
 	}
-	out, err := exec.Command("tmux", "kill-session", "-t", "="+session).CombinedOutput()
+	out, err := exec.Command("tmux", "kill-session", "-t", session).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tmux kill-session: %s", commandError(err, out))
 	}
@@ -277,10 +277,10 @@ func (c *connection) renameSession(session, name string) error {
 	if !validSessionName(name) {
 		return errors.New("invalid session name")
 	}
-	if contains(Sessions(), name) {
-		return errors.New("session already exists")
+	if tmuxSessionExists(name) {
+		return errors.New("tmux session already exists: " + name)
 	}
-	out, err := exec.Command("tmux", "rename-session", "-t", "="+session, name).CombinedOutput()
+	out, err := exec.Command("tmux", "rename-session", "-t", session, name).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tmux rename-session: %s", commandError(err, out))
 	}
@@ -291,8 +291,8 @@ func (c *connection) createSession(name, command string) error {
 	if !validSessionName(name) {
 		return errors.New("invalid session name")
 	}
-	if contains(Sessions(), name) {
-		return errors.New("session already exists")
+	if tmuxSessionExists(name) {
+		return errors.New("tmux session already exists: " + name)
 	}
 	args := []string{"new-session", "-d", "-s", name}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
@@ -302,8 +302,8 @@ func (c *connection) createSession(name, command string) error {
 	if err != nil {
 		return fmt.Errorf("tmux new-session: %s", commandError(err, out))
 	}
-	if out, err := exec.Command("tmux", "set-option", "-t", "="+name, "@portal", "1").CombinedOutput(); err != nil {
-		_ = exec.Command("tmux", "kill-session", "-t", "="+name).Run()
+	if out, err := exec.Command("tmux", "set-option", "-t", name, "@portal", "1").CombinedOutput(); err != nil {
+		_ = exec.Command("tmux", "kill-session", "-t", name).Run()
 		return fmt.Errorf("mark Portal session: %s", commandError(err, out))
 	}
 	if err := applyPortalStatusColor(name); err != nil {
@@ -313,10 +313,10 @@ func (c *connection) createSession(name, command string) error {
 		if strings.ContainsAny(command, "\r\n") {
 			return errors.New("command must be one line")
 		}
-		if out, err := exec.Command("tmux", "send-keys", "-t", "="+name, "-l", "--", command).CombinedOutput(); err != nil {
+		if out, err := exec.Command("tmux", "send-keys", "-t", name, "-l", "--", command).CombinedOutput(); err != nil {
 			return fmt.Errorf("tmux send command: %s", commandError(err, out))
 		}
-		if out, err := exec.Command("tmux", "send-keys", "-t", "="+name, "Enter").CombinedOutput(); err != nil {
+		if out, err := exec.Command("tmux", "send-keys", "-t", name, "Enter").CombinedOutput(); err != nil {
 			return fmt.Errorf("tmux send Enter: %s", commandError(err, out))
 		}
 	}
@@ -333,7 +333,7 @@ func (c *connection) scheduleInput(session, text string, delaySeconds int64, rep
 	if repeat > 100 || (repeat > 1 && intervalSeconds <= 0) {
 		return errors.New("invalid repeat settings")
 	}
-	paneOut, err := exec.Command("tmux", "display-message", "-p", "-t", "="+session, "#{pane_id}").Output()
+	paneOut, err := exec.Command("tmux", "display-message", "-p", "-t", session, "#{pane_id}").Output()
 	if err != nil {
 		return fmt.Errorf("resolve tmux pane: %w", err)
 	}
@@ -374,7 +374,7 @@ func (c *connection) setStatusColor(value string) error {
 }
 
 func applyPortalStatusColor(session string) error {
-	out, err := exec.Command("tmux", "show-option", "-gqv", "@portal_status_bg").Output()
+	out, err := exec.Command("tmux", "show-options", "-gqv", "@portal_status_bg").Output()
 	if err != nil {
 		return nil
 	}
@@ -384,14 +384,16 @@ func applyPortalStatusColor(session string) error {
 	}
 	style := "bg=" + color
 	for _, option := range []string{"status-style", "status-left-style", "status-right-style", "window-status-style", "window-status-current-style"} {
-		if out, err := exec.Command("tmux", "set-option", "-t", "="+session, option, style).CombinedOutput(); err != nil {
+		if out, err := exec.Command("tmux", "set-option", "-t", session, option, style).CombinedOutput(); err != nil {
 			return fmt.Errorf("%s: %s", option, commandError(err, out))
 		}
 	}
-	// status-bg is an older alias still understood by common tmux releases.
-	// Keep it as a best-effort compatibility nudge for configs using legacy status options.
-	_ = exec.Command("tmux", "set-option", "-t", "="+session, "status-bg", color).Run()
+	_ = exec.Command("tmux", "set-option", "-t", session, "status-bg", color).Run()
 	return nil
+}
+
+func tmuxSessionExists(name string) bool {
+	return exec.Command("tmux", "has-session", "-t", name).Run() == nil
 }
 
 func commandError(err error, out []byte) string {
