@@ -124,7 +124,7 @@ case "$choice" in
         secret "Tailscale auth key (leave blank if already connected): "
         key="$REPLY"
         if [ -n "$key" ]; then
-            "$BIN" expose tailscale --key "$key"
+            TAILSCALE_AUTHKEY="$key" "$BIN" expose tailscale
         else
             "$BIN" expose tailscale
         fi
@@ -136,7 +136,7 @@ case "$choice" in
         key="$REPLY"
         prompt "Public Portal URL (for example https://portal.example.com): "
         url="$REPLY"
-        "$BIN" expose cloudflare --key "$key" --url "$url"
+        CLOUDFLARE_TUNNEL_TOKEN="$key" "$BIN" expose cloudflare --url "$url"
         ;;
     3)
         say "Installed. Run: $BIN"
