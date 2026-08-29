@@ -158,6 +158,15 @@ func constantEqual(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
+func bearerToken(r *http.Request) (string, bool) {
+	const prefix = "Bearer "
+	header := r.Header.Get("Authorization")
+	if !strings.HasPrefix(header, prefix) {
+		return "", false
+	}
+	return strings.TrimPrefix(header, prefix), true
+}
+
 func (s *Server) handleSessions(w http.ResponseWriter, _ *http.Request) {
 	s.mu.RLock()
 	list := make([]protocol.Session, 0)
@@ -179,7 +188,8 @@ func (s *Server) handleSessions(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
-	if !constantEqual(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), s.token) {
+	token, ok := bearerToken(r)
+	if !ok || !constantEqual(token, s.token) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -227,9 +237,11 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) removeAgent(a *agentConn) {
 	s.mu.Lock()
-	if s.agents[a.host] == a {
-		delete(s.agents, a.host)
+	if s.agents[a.host] != a {
+		s.mu.Unlock()
+		return
 	}
+	delete(s.agents, a.host)
 	var closeRoutes []*browserConn
 	for id, b := range s.routes {
 		if b.host == a.host {
