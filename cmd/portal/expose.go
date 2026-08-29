@@ -33,6 +33,11 @@ func expose(args []string) error {
 func exposeTailscale(args []string) error {
 	key := firstNonEmpty(os.Getenv("TAILSCALE_AUTHKEY"), os.Getenv("TS_AUTHKEY"))
 	password := firstNonEmpty(os.Getenv("PORTAL_PASSWORD"), os.Getenv("PORTAL_TOKEN"))
+	funnelHost := firstNonEmpty(os.Getenv("PORTAL_FUNNEL_HOST"), "portal")
+	portalHost := os.Getenv("PORTAL_HOST")
+	if portalHost == "" {
+		portalHost, _ = os.Hostname()
+	}
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--key":
@@ -41,12 +46,30 @@ func exposeTailscale(args []string) error {
 				return errors.New("--key requires a value")
 			}
 			key = args[i]
+		case "--hostname":
+			i++
+			if i >= len(args) {
+				return errors.New("--hostname requires a value")
+			}
+			funnelHost = args[i]
+		case "--host":
+			i++
+			if i >= len(args) {
+				return errors.New("--host requires a value")
+			}
+			portalHost = args[i]
 		default:
 			return fmt.Errorf("unknown option %s", args[i])
 		}
 	}
 	if password == "" {
 		return errors.New("PORTAL_PASSWORD is required")
+	}
+	if !validTailscaleHostname(funnelHost) {
+		return errors.New("Tailscale host names must be 1-63 letters, digits, or hyphens and cannot start or end with a hyphen")
+	}
+	if !validHostAlias(portalHost) {
+		return errors.New("Portal host name may contain only letters, digits, _, and -")
 	}
 	if _, err := exec.LookPath("tailscale"); err != nil {
 		return errors.New("tailscale is required")
@@ -64,31 +87,39 @@ func exposeTailscale(args []string) error {
 		}
 	}
 
+	out, err := privilegedCommand("tailscale", "set", "--hostname="+funnelHost).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("tailscale set hostname: %s", commandOutput(err, out))
+	}
 	if err := ensureHub(password); err != nil {
 		return err
 	}
-	out, err := privilegedCommand("tailscale", "funnel", "--bg", "--yes", fmt.Sprintf("http://127.0.0.1:%d", hubPort)).CombinedOutput()
+	out, err = privilegedCommand("tailscale", "funnel", "--bg", "--yes", fmt.Sprintf("http://127.0.0.1:%d", hubPort)).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("tailscale funnel: %s", strings.TrimSpace(string(out)))
+		return fmt.Errorf("tailscale funnel: %s", commandOutput(err, out))
 	}
 	url := firstHTTPS(string(out))
-	if url == "" {
+	if url == "" || !strings.HasPrefix(strings.TrimPrefix(url, "https://"), funnelHost+".") {
 		status, _ := privilegedCommand("tailscale", "funnel", "status").CombinedOutput()
 		url = firstHTTPS(string(status))
 	}
-	if url == "" {
-		url, err = tailscaleURL()
+	if url == "" || !strings.HasPrefix(strings.TrimPrefix(url, "https://"), funnelHost+".") {
+		url, err = waitTailscaleURL(funnelHost)
 		if err != nil {
 			return err
 		}
 	}
-	return finishExpose(url, password, "Tailscale Funnel")
+	return finishExpose(url, password, "Tailscale Funnel", portalHost)
 }
 
 func exposeCloudflare(args []string) error {
 	key := firstNonEmpty(os.Getenv("TUNNEL_TOKEN"), os.Getenv("CLOUDFLARE_TUNNEL_TOKEN"))
 	url := strings.TrimRight(os.Getenv("PORTAL_URL"), "/")
 	password := firstNonEmpty(os.Getenv("PORTAL_PASSWORD"), os.Getenv("PORTAL_TOKEN"))
+	portalHost := os.Getenv("PORTAL_HOST")
+	if portalHost == "" {
+		portalHost, _ = os.Hostname()
+	}
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--key":
@@ -103,12 +134,21 @@ func exposeCloudflare(args []string) error {
 				return errors.New("--url requires a value")
 			}
 			url = strings.TrimRight(args[i], "/")
+		case "--host":
+			i++
+			if i >= len(args) {
+				return errors.New("--host requires a value")
+			}
+			portalHost = args[i]
 		default:
 			return fmt.Errorf("unknown option %s", args[i])
 		}
 	}
 	if key == "" || url == "" || password == "" {
 		return errors.New("CLOUDFLARE_TUNNEL_TOKEN, PORTAL_PASSWORD, and --url are required")
+	}
+	if !validHostAlias(portalHost) {
+		return errors.New("Portal host name may contain only letters, digits, _, and -")
 	}
 	if _, err := exec.LookPath("cloudflared"); err != nil {
 		return errors.New("cloudflared is required")
@@ -119,7 +159,7 @@ func exposeCloudflare(args []string) error {
 	if err := ensureCloudflared(key); err != nil {
 		return err
 	}
-	return finishExpose(url, password, "Cloudflare Tunnel")
+	return finishExpose(url, password, "Cloudflare Tunnel", portalHost)
 }
 
 func tailscaleUpInteractive() error {
@@ -183,6 +223,17 @@ func tailscaleURL() (string, error) {
 	return "https://" + strings.TrimSuffix(status.Self.DNSName, "."), nil
 }
 
+func waitTailscaleURL(hostname string) (string, error) {
+	for range 40 {
+		url, err := tailscaleURL()
+		if err == nil && strings.HasPrefix(strings.TrimPrefix(url, "https://"), hostname+".") {
+			return url, nil
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return "", errors.New("Tailscale hostname changed, but the new Funnel URL was not visible yet; rerun `portal` in a moment")
+}
+
 func ensureHub(password string) error {
 	if processRunning(hubPIDPath()) {
 		return nil
@@ -237,19 +288,15 @@ func ensureCloudflared(key string) error {
 	return os.WriteFile(cloudflarePIDPath(), []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0600)
 }
 
-func finishExpose(url, password, provider string) error {
-	host, err := os.Hostname()
-	if err != nil {
-		return err
-	}
+func finishExpose(url, password, provider, host string) error {
 	cfg := config{URL: strings.TrimRight(url, "/"), Token: auth.AgentToken(password), Host: host}
 	if err := saveConfig(cfg); err != nil {
 		return err
 	}
-	if err := ensureDaemon(); err != nil {
+	if err := restartDaemon(); err != nil {
 		return err
 	}
-	fmt.Printf("✓ %s\nPortal: %s\nPassword: configured\n", provider, cfg.URL)
+	fmt.Printf("✓ %s\nPortal: %s\nHost: %s\nPassword: configured\n", provider, cfg.URL, cfg.Host)
 	return nil
 }
 
@@ -279,6 +326,13 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func commandOutput(err error, out []byte) string {
+	if text := strings.TrimSpace(string(out)); text != "" {
+		return text
+	}
+	return err.Error()
 }
 
 func hubPIDPath() string        { return configDir() + "/hub.pid" }
