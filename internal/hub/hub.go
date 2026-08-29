@@ -277,10 +277,19 @@ func (s *Server) pruneAttemptsLocked(now time.Time) {
 	if len(s.attempts) < 1024 {
 		return
 	}
+	oldestIP := ""
+	var oldest time.Time
 	for ip, a := range s.attempts {
 		if now.Sub(a.last) > authAttemptTTL {
 			delete(s.attempts, ip)
+			continue
 		}
+		if oldestIP == "" || a.last.Before(oldest) {
+			oldestIP, oldest = ip, a.last
+		}
+	}
+	if len(s.attempts) >= 8192 && oldestIP != "" {
+		delete(s.attempts, oldestIP)
 	}
 }
 
@@ -311,12 +320,9 @@ func clientIP(r *http.Request) string {
 	}
 	remote := net.ParseIP(strings.TrimSpace(host))
 	if remote != nil && remote.IsLoopback() {
-		for _, header := range []string{"CF-Connecting-IP", "X-Forwarded-For"} {
-			value := strings.TrimSpace(r.Header.Get(header))
-			if header == "X-Forwarded-For" {
-				value = strings.TrimSpace(strings.Split(value, ",")[0])
-			}
-			if ip := net.ParseIP(value); ip != nil {
+		parts := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
+		for i := len(parts) - 1; i >= 0; i-- {
+			if ip := net.ParseIP(strings.TrimSpace(parts[i])); ip != nil {
 				return ip.String()
 			}
 		}
