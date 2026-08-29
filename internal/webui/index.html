@@ -5,74 +5,107 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#111111">
 <title>Portal</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌀</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'><text x='60' y='86' text-anchor='middle' font-size='78'>🌀</text></svg>">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
 <style>
 :root{color-scheme:light dark;--bg:#fff;--fg:#111;--muted:#777;--line:#ddd;--tab:#f5f5f5;--active:#fff;--danger:#b22;--sidebar-width:220px}
 :root[data-theme=dark]{color-scheme:dark;--bg:#111;--fg:#eee;--muted:#888;--line:#333;--tab:#181818;--active:#111;--danger:#f77}
 :root[data-theme=light]{color-scheme:light;--bg:#fff;--fg:#111;--muted:#777;--line:#ddd;--tab:#f5f5f5;--active:#fff;--danger:#b22}
 *{box-sizing:border-box}html,body,#app{margin:0;width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--fg);font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-button,input,select{font:inherit}#app{display:grid;grid-template-rows:40px 1fr}.bar{display:flex;align-items:stretch;border-bottom:1px solid var(--line);background:var(--tab);min-width:0}.tabs{display:flex;flex:1;min-width:0;overflow:auto;scrollbar-width:none}.tabs::-webkit-scrollbar{display:none}.tabwrap{display:flex;flex:0 0 auto;border-right:1px solid var(--line)}.tab,.tabaction,.tool{border:0;background:transparent;color:var(--muted);white-space:nowrap;cursor:pointer}.tab{padding:0 10px 0 13px}.tab:hover,.tabaction:hover,.tool:hover{color:var(--fg)}.tab.active{background:var(--active);color:var(--fg)}.tabaction{width:27px;padding:0;opacity:.22}.tabaction.kill:hover{color:var(--danger)}.tabwrap:hover .tabaction{opacity:1}.tools{display:flex;margin-left:auto}.tool{padding:0 13px;border-left:1px solid var(--line);font-size:16px}.status,.hostcount{display:flex;align-items:center;padding:0 10px;color:var(--muted);white-space:nowrap}.status{max-width:38vw;overflow:hidden;text-overflow:ellipsis}.status.error{color:var(--danger)}.stage{position:relative;min-width:0;min-height:0;background:var(--bg)}.term{position:absolute;inset:0;padding:6px;display:none}.term.active{display:block}.empty{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted)}
-#app.vertical{grid-template-columns:var(--sidebar-width) 1fr;grid-template-rows:1fr}.vertical .bar{grid-column:1;grid-row:1;flex-direction:column;border-right:1px solid var(--line);border-bottom:0;min-height:0}.vertical .tabs{flex-direction:column;overflow:auto;flex:1}.vertical .tabwrap{height:38px;border-right:0;border-bottom:1px solid var(--line)}.vertical .tab{flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis}.vertical .tools{margin:0;border-top:1px solid var(--line)}.vertical .tool{height:38px;flex:1}.vertical .status,.vertical .hostcount{height:38px}.vertical .status{max-width:none}.vertical .stage{grid-column:2;grid-row:1}
+button,input,select{font:inherit}button{cursor:pointer}#app{display:grid;grid-template-rows:40px 1fr}.bar{display:flex;align-items:stretch;border-bottom:1px solid var(--line);background:var(--tab);min-width:0}.tabs{display:flex;flex:1;min-width:0;overflow:auto;scrollbar-width:none}.tabs::-webkit-scrollbar{display:none}.tabwrap{display:flex;flex:0 0 auto;border-right:1px solid var(--line)}.tab,.tool,.portalnav{border:0;background:transparent;color:var(--muted);white-space:nowrap}.tab{padding:0 13px;cursor:pointer}.tab:hover,.tool:hover,.portalnav:hover{color:var(--fg)}.tab.active,.portalnav.active{background:var(--active);color:var(--fg)}.tools{display:flex;margin-left:auto}.tool{padding:0 12px;border-left:1px solid var(--line);font-size:16px}.tool:disabled{opacity:.2;cursor:default}.tool.kill:not(:disabled):hover{color:var(--danger)}.portalnav{padding:0 12px;border-left:1px solid var(--line);cursor:pointer}.hostcount{color:var(--muted);margin-left:6px;font-size:11px}.stage{position:relative;min-width:0;min-height:0;background:var(--bg)}.term{position:absolute;inset:0;padding:6px;display:none}.term.active{display:block}.empty{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted)}
+#app.vertical{grid-template-columns:var(--sidebar-width) 1fr;grid-template-rows:1fr}.vertical .bar{grid-column:1;grid-row:1;flex-direction:column;border-right:1px solid var(--line);border-bottom:0;min-height:0}.vertical .tabs{flex-direction:column;overflow:auto;flex:1}.vertical .tabwrap{height:38px;border-right:0;border-bottom:1px solid var(--line)}.vertical .tab{width:100%;text-align:left;overflow:hidden;text-overflow:ellipsis}.vertical .portalnav{height:40px;text-align:left;border-left:0;border-top:1px solid var(--line);padding:0 13px}.vertical .tools{margin:0;border-top:1px solid var(--line)}.vertical .tool{height:40px;flex:1;border-left:1px solid var(--line)}.vertical .tool:first-child{border-left:0}.vertical .stage{grid-column:2;grid-row:1}
 .xterm,.xterm-viewport{height:100%!important}.xterm-viewport{scrollbar-width:thin}
-dialog{border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);padding:0;box-shadow:0 16px 60px #0005;min-width:min(390px,calc(100vw - 30px))}dialog::backdrop{background:#0006}.settings{padding:18px;display:grid;gap:14px}.settings h2{font-size:15px;margin:0 0 4px}.settings label{display:grid;grid-template-columns:1fr 170px;align-items:center;gap:14px}.settings select,.settings input[type=color]{width:100%;height:34px;border:1px solid var(--line);background:var(--active);color:var(--fg)}.settings .range{display:flex;align-items:center;gap:8px}.settings input[type=range]{width:125px}.settings output{width:42px;text-align:right;color:var(--muted)}.settings .buttons{display:flex;justify-content:flex-end;gap:8px}.settings button{padding:7px 12px;border:1px solid var(--line);background:var(--tab);color:var(--fg);cursor:pointer}
-@media(max-width:650px){.tab,.tool{padding-left:9px;padding-right:9px}.hostcount,.status{display:none}.tabaction{width:25px}}
-@media(hover:none){.tabaction{opacity:1}}
+.toast{position:absolute;z-index:20;right:14px;top:14px;max-width:min(640px,calc(100% - 28px));padding:9px 12px;border:1px solid var(--line);border-radius:6px;background:var(--tab);color:var(--fg);box-shadow:0 6px 24px #0004;white-space:pre-wrap;overflow-wrap:anywhere;display:none}.toast.error{border-color:var(--danger);color:var(--danger)}
+.portalpanel{position:absolute;inset:0;overflow:auto;padding:28px;display:none;background:var(--bg)}.portalpanel.active{display:block}.portalpanel .inner{max-width:820px;margin:0 auto}.portalpanel h1{font-size:20px;margin:0 0 22px}.portalpanel h2{font-size:14px;margin:28px 0 10px}.meta{display:grid;grid-template-columns:130px 1fr;gap:8px 14px;padding:14px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}.meta .k{color:var(--muted)}.meta .v{min-width:0;overflow-wrap:anywhere}.settingsgrid{display:grid;grid-template-columns:minmax(160px,1fr) minmax(180px,280px);gap:12px 18px;align-items:center}.settingsgrid label{color:var(--muted)}.settingsgrid select,.settingsgrid input[type=color]{width:100%;height:34px;border:1px solid var(--line);background:var(--active);color:var(--fg)}.range{display:flex;align-items:center;gap:9px}.range input{flex:1}.range output{width:46px;text-align:right;color:var(--muted)}.colorrow{display:flex;gap:8px}.colorrow input{flex:1}.panelbutton{border:1px solid var(--line);background:var(--tab);color:var(--fg);padding:7px 10px}.activityhead{display:flex;align-items:center;justify-content:space-between;gap:10px}.activity{border:1px solid var(--line);min-height:110px;max-height:300px;overflow:auto;background:var(--tab)}.activityrow{display:grid;grid-template-columns:70px 1fr;gap:10px;padding:8px 10px;border-bottom:1px solid var(--line)}.activityrow:last-child{border-bottom:0}.activityrow time{color:var(--muted)}.activityrow.error .activitytext{color:var(--danger)}.activityempty{padding:12px;color:var(--muted)}
+@media(max-width:650px){#app.vertical{grid-template-columns:min(var(--sidebar-width),45vw) 1fr}.tab,.tool,.portalnav{padding-left:9px;padding-right:9px}.portalpanel{padding:18px}.settingsgrid{grid-template-columns:1fr}.meta{grid-template-columns:90px 1fr}}
 </style>
 </head>
 <body>
 <div id="app">
   <div class="bar">
     <div class="tabs" id="tabs"></div>
-    <div class="status" id="status"></div>
-    <div class="hostcount" id="hostcount"></div>
-    <div class="tools"><button class="tool" id="newtab" title="New terminal">+</button><button class="tool" id="settings" title="Settings">⚙</button></div>
+    <button class="portalnav" id="portalNav" title="Portal settings and activity">🌀 Portal <span class="hostcount" id="hostcount"></span></button>
+    <div class="tools">
+      <button class="tool" id="newtab" title="New terminal">+</button>
+      <button class="tool" id="schedule" title="Schedule text + Enter for active terminal">◷</button>
+      <button class="tool" id="rename" title="Rename active terminal">✎</button>
+      <button class="tool kill" id="kill" title="Kill active terminal">×</button>
+    </div>
   </div>
-  <main class="stage" id="stage"><div class="empty" id="empty">no terminals</div></main>
+  <main class="stage" id="stage">
+    <div class="toast" id="toast"></div>
+    <div class="empty" id="empty">no terminals</div>
+    <section class="portalpanel" id="portalPanel">
+      <div class="inner">
+        <h1>🌀 Portal</h1>
+        <div class="meta">
+          <div class="k">URL</div><div class="v" id="debugURL"></div>
+          <div class="k">Hosts</div><div class="v" id="debugHosts"></div>
+          <div class="k">Sessions</div><div class="v" id="debugSessions"></div>
+        </div>
+
+        <h2>Appearance</h2>
+        <div class="settingsgrid">
+          <label for="setTheme">Theme</label>
+          <select id="setTheme"><option value="system">system</option><option value="light">light</option><option value="dark">dark</option></select>
+          <label for="setOrientation">Tabs</label>
+          <select id="setOrientation"><option value="vertical">vertical</option><option value="horizontal">horizontal</option></select>
+          <label for="setSidebarWidth">Vertical tab bar</label>
+          <span class="range"><input id="setSidebarWidth" type="range" min="140" max="360" step="10"><output id="sidebarWidthValue">220px</output></span>
+          <label for="statusColor">tmux status bar</label>
+          <span class="colorrow"><input id="statusColor" type="color" value="#008700"><button class="panelbutton" id="applyColor" type="button">Apply</button></span>
+        </div>
+
+        <div class="activityhead"><h2>Activity</h2><button class="panelbutton" id="clearActivity" type="button">Clear</button></div>
+        <div class="activity" id="activity"></div>
+      </div>
+    </section>
+  </main>
 </div>
-<dialog id="settingsDialog"><div class="settings">
-  <h2>🌀 Portal settings</h2>
-  <label>Theme <select id="setTheme"><option value="system">system</option><option value="light">light</option><option value="dark">dark</option></select></label>
-  <label>Tabs <select id="setOrientation"><option value="horizontal">horizontal</option><option value="vertical">vertical</option></select></label>
-  <label>Vertical tab bar <span class="range"><input id="setSidebarWidth" type="range" min="140" max="360" step="10"><output id="sidebarWidthValue">220px</output></span></label>
-  <label>tmux status bar <input id="statusColor" type="color" value="#008700"></label>
-  <div class="buttons"><button id="applyColor" type="button">Apply tmux color</button><button id="closeSettings" type="button">Close</button></div>
-</div></dialog>
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
 <script>
-const app=document.querySelector('#app'),tabsEl=document.querySelector('#tabs'),stage=document.querySelector('#stage'),empty=document.querySelector('#empty'),hostcount=document.querySelector('#hostcount'),statusEl=document.querySelector('#status'),settingsDialog=document.querySelector('#settingsDialog')
-const terms=new Map();let active=null,hostCount=0,statusTimer=null,lastSessions=[],hosts=[]
+const app=document.querySelector('#app'),tabsEl=document.querySelector('#tabs'),stage=document.querySelector('#stage'),empty=document.querySelector('#empty'),hostcount=document.querySelector('#hostcount'),toast=document.querySelector('#toast'),portalPanel=document.querySelector('#portalPanel'),portalNav=document.querySelector('#portalNav'),activityEl=document.querySelector('#activity')
+const terms=new Map();let active=null,hostCount=0,lastSessions=[],hosts=[],toastTimer=null,activity=[]
 const themes={dark:{background:'#111111',foreground:'#eeeeee',cursor:'#eeeeee'},light:{background:'#ffffff',foreground:'#111111',cursor:'#111111'}}
-let orientation=localStorage.portalOrientation||'horizontal',theme=localStorage.portalTheme||'system',sidebarWidth=Number.parseInt(localStorage.portalSidebarWidth||'220',10)
+let orientation=localStorage.portalOrientation||'vertical',theme=localStorage.portalTheme||'system',sidebarWidth=Number.parseInt(localStorage.portalSidebarWidth||'220',10)
 if(!Number.isFinite(sidebarWidth)||sidebarWidth<140||sidebarWidth>360)sidebarWidth=220
 function dark(){return theme==='dark'||(theme==='system'&&matchMedia('(prefers-color-scheme: dark)').matches)}
 function applyPrefs(){app.classList.toggle('vertical',orientation==='vertical');document.documentElement.dataset.theme=theme==='system'?'':theme;app.style.setProperty('--sidebar-width',sidebarWidth+'px');for(const x of terms.values())x.term.options.theme=dark()?themes.dark:themes.light;requestAnimationFrame(fitActive)}
 function key(s){return s.host+'\0'+s.session}
 function label(s){return hostCount>1?s.host+':'+s.session:s.session}
+function activeSession(){const x=terms.get(active);return x?x.s:null}
 function wsURL(path){return (location.protocol==='https:'?'wss://':'ws://')+location.host+path}
-function fitActive(){const x=terms.get(active);if(x){x.fit.fit();sendResize(x)}}
+function fitActive(){const x=terms.get(active);if(x&&active!=='__portal__'){x.fit.fit();sendResize(x)}}
 function sendResize(x){if(x.ws.readyState===WebSocket.OPEN)x.ws.send(JSON.stringify({type:'resize',cols:x.term.cols,rows:x.term.rows}))}
-function showStatus(text,error=false){clearTimeout(statusTimer);statusEl.textContent=text;statusEl.classList.toggle('error',error);statusTimer=setTimeout(()=>{statusEl.textContent='';statusEl.classList.remove('error')},5000)}
-async function sessionAction(body){try{const r=await fetch('/api/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(r.status===401){location.reload();return false}if(!r.ok){showStatus((await r.text()).trim()||'action failed',true);return false}return true}catch{showStatus('action failed',true);return false}}
-function chooseHost(){if(hosts.length===1)return hosts[0];if(hosts.length>1){const h=prompt('Host ('+hosts.join(', ')+'):',hosts[0]);return h&&hosts.includes(h)?h:null}showStatus('no connected hosts',true);return null}
-async function createSession(){const host=chooseHost();if(!host)return;const name=prompt('New terminal name:','');if(name===null||!name.trim())return;const command=prompt('Command (blank for a shell):','');if(command===null)return;showStatus('creating '+host+':'+name.trim()+'…');if(await sessionAction({action:'create',host,name:name.trim(),command})){await refresh();showStatus('created '+host+':'+name.trim())}}
-async function renameSession(s){const name=prompt('Rename '+label(s)+' to:',s.session);if(name===null||!name.trim()||name.trim()===s.session)return;if(await sessionAction({action:'rename',host:s.host,session:s.session,name:name.trim()})){await refresh();showStatus('renamed to '+name.trim())}}
-async function killSession(s){if(!confirm('Kill '+label(s)+'?\n\nThis terminates the tmux session.'))return;if(await sessionAction({action:'kill',host:s.host,session:s.session})){await refresh();showStatus('killed '+label(s))}}
-async function scheduleInput(s){const delay=prompt('First send after (examples: 30m, 5h):','5h');if(delay===null||!delay.trim())return;const text=prompt('Text to type, followed by Enter:','proceed');if(text===null||!text)return;if(/[\r\n]/.test(text)){showStatus('scheduled message must be one line',true);return}const rawRepeat=prompt('How many times total?','1');if(rawRepeat===null)return;const repeat=Number.parseInt(rawRepeat,10);if(!Number.isInteger(repeat)||repeat<1||repeat>100){showStatus('times must be 1–100',true);return}let interval='';if(repeat>1){const raw=prompt('Interval between sends:','10m');if(raw===null||!raw.trim())return;interval=raw.trim()}if(await sessionAction({action:'schedule',host:s.host,session:s.session,delay:delay.trim(),text,repeat,interval}))showStatus('scheduled '+label(s)+' ×'+repeat+' after '+delay.trim())}
+function nowTime(){return new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'})}
+function renderActivity(){activityEl.replaceChildren();if(!activity.length){const e=document.createElement('div');e.className='activityempty';e.textContent='No recent activity.';activityEl.appendChild(e);return}for(const item of activity){const row=document.createElement('div'),time=document.createElement('time'),text=document.createElement('div');row.className='activityrow'+(item.error?' error':'');time.textContent=item.time;text.className='activitytext';text.textContent=item.text;row.append(time,text);activityEl.appendChild(row)}}
+function record(text,error=false){activity.unshift({time:nowTime(),text,error});activity=activity.slice(0,50);renderActivity()}
+function showStatus(text,error=false){clearTimeout(toastTimer);toast.textContent=text;toast.classList.toggle('error',error);toast.style.display='block';record(text,error);toastTimer=setTimeout(()=>{toast.style.display='none'},error?9000:3500)}
+async function sessionAction(body,labelText='action'){try{const r=await fetch('/api/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(r.status===401){location.reload();return false}if(!r.ok){const msg=(await r.text()).trim()||'action failed';showStatus(labelText+': '+msg,true);return false}return true}catch(e){showStatus(labelText+': '+(e&&e.message?e.message:'request failed'),true);return false}}
+function chooseHost(){if(hosts.length===1)return hosts[0];if(hosts.length>1){const h=prompt('Host ('+hosts.join(', ')+'):',hosts[0]);return h&&hosts.includes(h)?h:null}showStatus('No connected hosts.',true);return null}
+async function createSession(){const host=chooseHost();if(!host)return;const name=prompt('New terminal name:','');if(name===null||!name.trim())return;const command=prompt('Command (blank for a shell):','');if(command===null)return;const clean=name.trim();if(await sessionAction({action:'create',host,name:clean,command},'Create '+host+':'+clean)){await refresh();showStatus('Created '+host+':'+clean)}}
+async function renameSession(s){if(!s)return;const name=prompt('Rename '+label(s)+' to:',s.session);if(name===null||!name.trim()||name.trim()===s.session)return;const clean=name.trim();if(await sessionAction({action:'rename',host:s.host,session:s.session,name:clean},'Rename '+label(s))){await refresh();showStatus('Renamed to '+clean)}}
+async function killSession(s){if(!s)return;if(!confirm('Kill '+label(s)+'?\n\nThis terminates the tmux session.'))return;if(await sessionAction({action:'kill',host:s.host,session:s.session},'Kill '+label(s))){await refresh();showStatus('Killed '+label(s))}}
+async function scheduleInput(s){if(!s)return;const delay=prompt('First send after (examples: 30m, 5h):','5h');if(delay===null||!delay.trim())return;const text=prompt('Text to type, followed by Enter:','proceed');if(text===null||!text)return;if(/[\r\n]/.test(text)){showStatus('Scheduled message must be one line.',true);return}const rawRepeat=prompt('How many times total?','1');if(rawRepeat===null)return;const repeat=Number.parseInt(rawRepeat,10);if(!Number.isInteger(repeat)||repeat<1||repeat>100){showStatus('Repeat count must be 1–100.',true);return}let interval='';if(repeat>1){const raw=prompt('Interval between sends:','10m');if(raw===null||!raw.trim())return;interval=raw.trim()}if(await sessionAction({action:'schedule',host:s.host,session:s.session,delay:delay.trim(),text,repeat,interval},'Schedule '+label(s)))showStatus('Scheduled '+label(s)+' ×'+repeat+' after '+delay.trim())}
 function openTerm(s){const k=key(s);if(terms.has(k))return terms.get(k);const el=document.createElement('div');el.className='term';stage.appendChild(el);const term=new Terminal({cursorBlink:true,fontFamily:'ui-monospace,SFMono-Regular,Menlo,Consolas,monospace',fontSize:14,scrollback:10000,theme:dark()?themes.dark:themes.light});const fit=new FitAddon.FitAddon();term.loadAddon(fit);term.open(el);const ws=new WebSocket(wsURL('/api/terminal?host='+encodeURIComponent(s.host)+'&session='+encodeURIComponent(s.session)));ws.binaryType='arraybuffer';const x={s,el,term,fit,ws};terms.set(k,x);term.onData(data=>{if(ws.readyState===WebSocket.OPEN)ws.send(new TextEncoder().encode(data))});term.onResize(()=>sendResize(x));ws.onopen=()=>{fit.fit();sendResize(x)};ws.onmessage=e=>{if(typeof e.data==='string')term.write(e.data);else term.write(new Uint8Array(e.data))};ws.onclose=()=>term.write('\r\n\x1b[90m[disconnected]\x1b[0m\r\n');return x}
-function activate(k){const changed=active!==k,old=terms.get(active);if(changed&&old)old.el.classList.remove('active');active=k;document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.key===k));const x=terms.get(k);if(x){x.el.classList.add('active');empty.style.display='none';if(changed)requestAnimationFrame(()=>{x.fit.fit();x.term.focus()})}else empty.style.display='grid'}
-function render(list){const current=new Set(list.map(key));for(const [k,x] of terms)if(!current.has(k)){x.ws.close();x.term.dispose();x.el.remove();terms.delete(k);if(active===k)active=null}tabsEl.replaceChildren();for(const s of list){const k=key(s),wrap=document.createElement('div'),b=document.createElement('button'),clock=document.createElement('button'),rename=document.createElement('button'),close=document.createElement('button');wrap.className='tabwrap';b.className='tab';b.dataset.key=k;b.textContent=label(s);b.title=s.host+' / '+s.session;b.onclick=()=>{openTerm(s);activate(k)};clock.className='tabaction';clock.textContent='◷';clock.title='Schedule text + Enter';clock.onclick=e=>{e.stopPropagation();scheduleInput(s)};rename.className='tabaction';rename.textContent='✎';rename.title='Rename session';rename.onclick=e=>{e.stopPropagation();renameSession(s)};close.className='tabaction kill';close.textContent='×';close.title='Kill session';close.onclick=e=>{e.stopPropagation();killSession(s)};wrap.append(b,clock,rename,close);tabsEl.appendChild(wrap)}if(!active&&list.length){const s=list[0],k=key(s);openTerm(s);activate(k)}else activate(active);empty.style.display=list.length?'none':'grid'}
-async function refresh(){try{const r=await fetch('/api/sessions',{cache:'no-store'});if(r.status===401){location.reload();return}if(!r.ok)return;const data=await r.json();hostCount=data.host_count;lastSessions=data.sessions||[];hosts=(data.hosts&&data.hosts.length?data.hosts:[...new Set(lastSessions.map(s=>s.host))]).sort();hostcount.textContent=hostCount+(hostCount===1?' host':' hosts');render(lastSessions)}catch{}}
+function updateActionButtons(){const onTerm=!!activeSession();document.querySelector('#schedule').disabled=!onTerm;document.querySelector('#rename').disabled=!onTerm;document.querySelector('#kill').disabled=!onTerm}
+function activate(k){for(const x of terms.values())x.el.classList.remove('active');active=k;portalPanel.classList.toggle('active',k==='__portal__');portalNav.classList.toggle('active',k==='__portal__');document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.key===k));const x=terms.get(k);if(x){x.el.classList.add('active');empty.style.display='none';portalPanel.classList.remove('active');portalNav.classList.remove('active');requestAnimationFrame(()=>{x.fit.fit();x.term.focus()})}else if(k==='__portal__'){empty.style.display='none';updatePortalPanel()}else empty.style.display='grid';updateActionButtons()}
+function render(list){const current=new Set(list.map(key));for(const [k,x] of terms)if(!current.has(k)){x.ws.close();x.term.dispose();x.el.remove();terms.delete(k);if(active===k)active=null}tabsEl.replaceChildren();for(const s of list){const k=key(s),wrap=document.createElement('div'),b=document.createElement('button');wrap.className='tabwrap';b.className='tab';b.dataset.key=k;b.textContent=label(s);b.title=s.host+' / '+s.session;b.onclick=()=>{openTerm(s);activate(k)};wrap.appendChild(b);tabsEl.appendChild(wrap)}if(!active&&list.length){const s=list[0],k=key(s);openTerm(s);activate(k)}else if(!active){activate('__portal__')}else activate(active)}
+function updatePortalPanel(){document.querySelector('#debugURL').textContent=location.origin;document.querySelector('#debugHosts').textContent=hosts.length?hosts.join(', '):'none connected';document.querySelector('#debugSessions').textContent=String(lastSessions.length);document.querySelector('#setTheme').value=theme;document.querySelector('#setOrientation').value=orientation;document.querySelector('#setSidebarWidth').value=String(sidebarWidth);document.querySelector('#sidebarWidthValue').textContent=sidebarWidth+'px'}
+async function refresh(){try{const r=await fetch('/api/sessions',{cache:'no-store'});if(r.status===401){location.reload();return}if(!r.ok)return;const data=await r.json();hostCount=data.host_count;lastSessions=data.sessions||[];hosts=(data.hosts&&data.hosts.length?data.hosts:[...new Set(lastSessions.map(s=>s.host))]).sort();hostcount.textContent=hostCount;render(lastSessions);if(active==='__portal__')updatePortalPanel()}catch{}}
 document.querySelector('#newtab').onclick=createSession
-document.querySelector('#settings').onclick=()=>{document.querySelector('#setTheme').value=theme;document.querySelector('#setOrientation').value=orientation;document.querySelector('#setSidebarWidth').value=String(sidebarWidth);document.querySelector('#sidebarWidthValue').textContent=sidebarWidth+'px';settingsDialog.showModal()}
-document.querySelector('#closeSettings').onclick=()=>settingsDialog.close()
+document.querySelector('#schedule').onclick=()=>scheduleInput(activeSession())
+document.querySelector('#rename').onclick=()=>renameSession(activeSession())
+document.querySelector('#kill').onclick=()=>killSession(activeSession())
+portalNav.onclick=()=>activate('__portal__')
 document.querySelector('#setTheme').onchange=e=>{theme=e.target.value;localStorage.portalTheme=theme;applyPrefs()}
 document.querySelector('#setOrientation').onchange=e=>{orientation=e.target.value;localStorage.portalOrientation=orientation;applyPrefs()}
 document.querySelector('#setSidebarWidth').oninput=e=>{sidebarWidth=Number.parseInt(e.target.value,10);localStorage.portalSidebarWidth=String(sidebarWidth);document.querySelector('#sidebarWidthValue').textContent=sidebarWidth+'px';applyPrefs()}
-document.querySelector('#applyColor').onclick=async()=>{const value=document.querySelector('#statusColor').value;localStorage.portalStatusColor=value;if(await sessionAction({action:'status_color',value})){showStatus('tmux status color updated');settingsDialog.close()}}
+document.querySelector('#applyColor').onclick=async()=>{const value=document.querySelector('#statusColor').value;localStorage.portalStatusColor=value;if(await sessionAction({action:'status_color',value},'Apply tmux status color'))showStatus('tmux status color updated')}
+document.querySelector('#clearActivity').onclick=()=>{activity=[];renderActivity()}
 const savedStatusColor=localStorage.portalStatusColor;if(/^#[0-9a-f]{6}$/i.test(savedStatusColor||''))document.querySelector('#statusColor').value=savedStatusColor
-matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{if(theme==='system')applyPrefs()});addEventListener('resize',fitActive);applyPrefs();refresh();setInterval(refresh,1500)
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{if(theme==='system')applyPrefs()});addEventListener('resize',fitActive);renderActivity();applyPrefs();refresh();setInterval(refresh,1500)
 </script>
 </body>
 </html>
