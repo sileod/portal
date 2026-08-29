@@ -55,6 +55,7 @@ build_current_main() {
     say "No prebuilt Portal binary published yet; building current main with the Go already installed on this machine."
     (
         cd "$TMP/portal-main"
+        GOTOOLCHAIN=local go mod tidy
         GOTOOLCHAIN=local go build -o "$TMP/portal" ./cmd/portal
     )
     install -m 0755 "$TMP/portal" "$BIN"
