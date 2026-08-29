@@ -93,8 +93,14 @@ func runOnce(cfg Config) error {
 			c.close(m.ID)
 		case "kill_session":
 			c.killSession(m.Session)
+		case "rename_session":
+			c.renameSession(m.Session, m.Name)
+		case "create_session":
+			c.createSession(m.Name, m.Command)
 		case "schedule_input":
-			c.scheduleInput(m.Session, m.Text, m.DelaySeconds)
+			c.scheduleInput(m.Session, m.Text, m.DelaySeconds, m.Repeat, m.IntervalSeconds)
+		case "status_color":
+			c.setStatusColor(m.Value)
 		}
 	}
 }
@@ -245,8 +251,46 @@ func (c *connection) killSession(session string) {
 	}
 }
 
-func (c *connection) scheduleInput(session, text string, delaySeconds int64) {
+func (c *connection) renameSession(session, name string) {
+	if !contains(Sessions(), session) || !validSessionName(name) || contains(Sessions(), name) {
+		return
+	}
+	if out, err := exec.Command("tmux", "rename-session", "-t", "="+session, name).CombinedOutput(); err != nil {
+		log.Printf("rename session %s: %v: %s", session, err, strings.TrimSpace(string(out)))
+	}
+}
+
+func (c *connection) createSession(name, command string) {
+	if !validSessionName(name) || contains(Sessions(), name) {
+		return
+	}
+	args := []string{"new-session", "-d", "-s", name}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		args = append(args, "-c", home)
+	}
+	if out, err := exec.Command("tmux", args...).CombinedOutput(); err != nil {
+		log.Printf("create session %s: %v: %s", name, err, strings.TrimSpace(string(out)))
+		return
+	}
+	exec.Command("tmux", "set-option", "-t", "="+name, "@portal", "1").Run()
+	applyPortalStatusColor(name)
+	if command != "" && !strings.ContainsAny(command, "\r\n") {
+		exec.Command("tmux", "send-keys", "-t", "="+name, "-l", "--", command).Run()
+		exec.Command("tmux", "send-keys", "-t", "="+name, "Enter").Run()
+	}
+}
+
+func (c *connection) scheduleInput(session, text string, delaySeconds int64, repeat int, intervalSeconds int64) {
 	if delaySeconds <= 0 || text == "" || strings.ContainsAny(text, "\r\n") || !contains(Sessions(), session) {
+		return
+	}
+	if repeat <= 0 {
+		repeat = 1
+	}
+	if repeat > 100 {
+		return
+	}
+	if repeat > 1 && intervalSeconds <= 0 {
 		return
 	}
 	paneOut, err := exec.Command("tmux", "display-message", "-p", "-t", "="+session, "#{pane_id}").Output()
@@ -259,15 +303,64 @@ func (c *connection) scheduleInput(session, text string, delaySeconds int64) {
 		return
 	}
 	script := fmt.Sprintf(
-		"sleep %d; tmux send-keys -t %s -l -- %s; tmux send-keys -t %s Enter",
+		"sleep %d; i=1; while [ $i -le %d ]; do tmux send-keys -t %s -l -- %s; tmux send-keys -t %s Enter; i=$((i+1)); if [ $i -le %d ]; then sleep %d; fi; done",
 		delaySeconds,
+		repeat,
 		shellQuote(pane),
 		shellQuote(text),
 		shellQuote(pane),
+		repeat,
+		intervalSeconds,
 	)
 	if out, err := exec.Command("tmux", "run-shell", "-b", script).CombinedOutput(); err != nil {
 		log.Printf("schedule input for %s: %v: %s", session, err, strings.TrimSpace(string(out)))
 	}
+}
+
+func (c *connection) setStatusColor(value string) {
+	if !validHexColor(value) {
+		return
+	}
+	exec.Command("tmux", "set-option", "-g", "@portal_status_bg", value).Run()
+	for _, session := range Sessions() {
+		applyPortalStatusColor(session)
+	}
+}
+
+func applyPortalStatusColor(session string) {
+	out, err := exec.Command("tmux", "show-option", "-gqv", "@portal_status_bg").Output()
+	if err != nil {
+		return
+	}
+	color := strings.TrimSpace(string(out))
+	if !validHexColor(color) {
+		return
+	}
+	exec.Command("tmux", "set-option", "-t", "="+session, "status-style", "bg="+color).Run()
+}
+
+func validHexColor(s string) bool {
+	if len(s) != 7 || s[0] != '#' {
+		return false
+	}
+	for _, r := range s[1:] {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+func validSessionName(name string) bool {
+	if name == "" || len(name) > 80 {
+		return false
+	}
+	for _, r := range name {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 func shellQuote(s string) string {
