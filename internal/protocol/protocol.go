@@ -6,6 +6,7 @@ type Message struct {
 	Host            string   `json:"host,omitempty"`
 	Session         string   `json:"session,omitempty"`
 	Sessions        []string `json:"sessions,omitempty"`
+	Capabilities    []string `json:"capabilities,omitempty"`
 	Data            string   `json:"data,omitempty"`
 	Text            string   `json:"text,omitempty"`
 	Name            string   `json:"name,omitempty"`
