@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/sileod/portal/internal/agent"
+	"github.com/sileod/portal/internal/auth"
 	"github.com/sileod/portal/internal/hub"
 	"golang.org/x/term"
 )
@@ -54,15 +55,15 @@ func run() error {
 
 	switch args[0] {
 	case "hub":
-		token := os.Getenv("PORTAL_TOKEN")
-		if token == "" {
-			return errors.New("PORTAL_TOKEN is required")
+		password := firstNonEmpty(os.Getenv("PORTAL_PASSWORD"), os.Getenv("PORTAL_TOKEN"))
+		if password == "" {
+			return errors.New("PORTAL_PASSWORD is required")
 		}
 		addr := os.Getenv("PORTAL_ADDR")
 		if addr == "" {
 			addr = ":8080"
 		}
-		return hub.New(token).Run(addr)
+		return hub.New(password).Run(addr)
 	case "daemon":
 		cfg, err := loadConfig()
 		if err != nil {
@@ -140,22 +141,22 @@ func run() error {
 }
 
 func usage() {
-	fmt.Print(`portal                     first-run setup, then show the central URL
-portal NAME                create/keep a terminal tab
-portal NAME -- COMMAND...  create/keep a tab running COMMAND
-portal ls                  list local portal sessions
-portal rm NAME             remove a session
-portal open                open the central URL
-portal link URL --token T  link/relink this host non-interactively
-portal expose tailscale    run the hub through Tailscale Funnel
-portal expose cloudflare   run the hub through Cloudflare Tunnel
-portal hub                 run the central hub
+	fmt.Print(`portal                        first-run setup, then show the central URL
+portal NAME                   create/keep a terminal tab
+portal NAME -- COMMAND...     create/keep a tab running COMMAND
+portal ls                     list local portal sessions
+portal rm NAME                remove a session
+portal open                   open the central URL
+portal link URL --password P  link/relink this host with the Portal password
+portal expose tailscale       run the hub through Tailscale Funnel
+portal expose cloudflare      run the hub through Cloudflare Tunnel
+portal hub                    run the central hub
 `)
 }
 
 func interactiveSetup() (config, error) {
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		return config{}, errors.New("not linked; run `portal link URL --token TOKEN` or run `portal` interactively")
+		return config{}, errors.New("not linked; run `portal link URL --password PASSWORD` or run `portal` interactively")
 	}
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Print("Portal URL: ")
@@ -164,16 +165,17 @@ func interactiveSetup() (config, error) {
 		return config{}, err
 	}
 	url = strings.TrimRight(strings.TrimSpace(url), "/")
-	fmt.Print("Access token: ")
+	fmt.Print("Portal password: ")
 	password, err := term.ReadPassword(int(os.Stdin.Fd()))
 	fmt.Println()
 	if err != nil {
 		return config{}, err
 	}
 	host, _ := os.Hostname()
-	cfg := config{URL: url, Token: strings.TrimSpace(string(password)), Host: host}
-	if cfg.URL == "" || cfg.Token == "" || cfg.Host == "" {
-		return config{}, errors.New("URL, token, and host are required")
+	secret := strings.TrimSpace(string(password))
+	cfg := config{URL: url, Token: auth.AgentToken(secret), Host: host}
+	if cfg.URL == "" || secret == "" || cfg.Host == "" {
+		return config{}, errors.New("URL, password, and host are required")
 	}
 	if err := saveConfig(cfg); err != nil {
 		return config{}, err
@@ -184,11 +186,20 @@ func interactiveSetup() (config, error) {
 
 func link(args []string) error {
 	cfg := config{Token: os.Getenv("PORTAL_TOKEN")}
+	if password := os.Getenv("PORTAL_PASSWORD"); password != "" {
+		cfg.Token = auth.AgentToken(password)
+	}
 	if h, err := os.Hostname(); err == nil {
 		cfg.Host = h
 	}
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--password":
+			i++
+			if i >= len(args) {
+				return errors.New("--password requires a value")
+			}
+			cfg.Token = auth.AgentToken(args[i])
 		case "--token":
 			i++
 			if i >= len(args) {
@@ -215,7 +226,7 @@ func link(args []string) error {
 		cfg.URL = strings.TrimRight(os.Getenv("PORTAL_URL"), "/")
 	}
 	if cfg.URL == "" || cfg.Token == "" {
-		return errors.New("usage: portal link https://portal.example.com --token TOKEN")
+		return errors.New("usage: portal link https://portal.example.com --password PASSWORD")
 	}
 	if cfg.Host == "" {
 		return errors.New("could not determine host name; pass --host NAME")
@@ -313,6 +324,9 @@ func logPath() string    { return filepath.Join(configDir(), "daemon.log") }
 
 func loadConfig() (config, error) {
 	cfg := config{URL: strings.TrimRight(os.Getenv("PORTAL_URL"), "/"), Token: os.Getenv("PORTAL_TOKEN"), Host: os.Getenv("PORTAL_HOST")}
+	if password := os.Getenv("PORTAL_PASSWORD"); password != "" {
+		cfg.Token = auth.AgentToken(password)
+	}
 	data, err := os.ReadFile(configPath())
 	if err == nil {
 		var fileCfg config
