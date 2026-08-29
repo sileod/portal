@@ -35,6 +35,23 @@ PATH="$INSTALL_DIR:$PATH"
 export PATH
 BIN="$INSTALL_DIR/portal"
 
+install_go() {
+    command -v go >/dev/null 2>&1 && return
+    prompt "No Portal release binary exists yet. Install Go to build it now? [Y/n] "
+    case "${REPLY:-y}" in
+        n|N) say "Cannot install Portal without a release binary or Go."; exit 1 ;;
+    esac
+    if command -v apt-get >/dev/null 2>&1; then
+        sudo apt-get update
+        sudo apt-get install -y golang-go
+    elif command -v brew >/dev/null 2>&1; then
+        brew install go
+    else
+        say "Install Go and rerun this installer."
+        exit 1
+    fi
+}
+
 install_portal() {
     tag="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1 || true)"
     if [ -n "$tag" ]; then
@@ -47,16 +64,10 @@ install_portal() {
         fi
     fi
 
-    if command -v go >/dev/null 2>&1; then
-        say "No release binary found; building Portal with Go..."
-        GOBIN="$TMP/bin" go install "github.com/$REPO/cmd/portal@latest"
-        install -m 0755 "$TMP/bin/portal" "$BIN"
-        return
-    fi
-
-    say "No release binary is available yet and Go is not installed."
-    say "Install Go, or create a Portal release, then rerun this installer."
-    exit 1
+    install_go
+    say "Building Portal..."
+    GOBIN="$TMP/bin" go install "github.com/$REPO/cmd/portal@latest"
+    install -m 0755 "$TMP/bin/portal" "$BIN"
 }
 
 install_tmux() {
