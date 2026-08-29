@@ -75,6 +75,8 @@ func run() error {
 		return agent.Run(agent.Config{URL: cfg.URL, Token: cfg.Token, Host: cfg.Host})
 	case "link":
 		return link(args[1:])
+	case "expose":
+		return expose(args[1:])
 	case "ls":
 		cfg, err := loadConfig()
 		if err != nil {
@@ -145,6 +147,8 @@ portal ls                  list local portal sessions
 portal rm NAME             remove a session
 portal open                open the central URL
 portal link URL --token T  link/relink this host non-interactively
+portal expose tailscale    run the hub through Tailscale Funnel
+portal expose cloudflare   run the hub through Cloudflare Tunnel
 portal hub                 run the central hub
 `)
 }
