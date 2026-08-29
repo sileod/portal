@@ -3,6 +3,7 @@ set -eu
 
 REPO="sileod/portal"
 INSTALL_DIR="${PORTAL_INSTALL_DIR:-$HOME/.local/bin}"
+CONFIG_DIR="${PORTAL_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/portal}"
 TMP="$(mktemp -d)"
 trap 'stty echo 2>/dev/null || true; rm -rf "$TMP"' EXIT INT TERM
 
@@ -17,6 +18,24 @@ secret() {
     IFS= read -r REPLY < /dev/tty
     stty echo < /dev/tty
     printf '\n' > /dev/tty
+}
+pid_running() {
+    [ -f "$1" ] || return 1
+    pid="$(cat "$1" 2>/dev/null || true)"
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+stop_pidfile() {
+    path="$1"
+    if pid_running "$path"; then
+        pid="$(cat "$path")"
+        kill "$pid" 2>/dev/null || true
+        i=0
+        while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 30 ]; do
+            sleep 0.1
+            i=$((i+1))
+        done
+    fi
+    rm -f "$path"
 }
 
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -35,6 +54,10 @@ PATH="$INSTALL_DIR:$PATH"
 export PATH
 BIN="$INSTALL_DIR/portal"
 ASSET="portal_${OS}_${ARCH}.tar.gz"
+EXISTING=0
+[ -f "$CONFIG_DIR/config.json" ] && EXISTING=1
+HUB_WAS_RUNNING=0
+pid_running "$CONFIG_DIR/hub.pid" && HUB_WAS_RUNNING=1
 
 install_asset() {
     tag="$1"
@@ -118,9 +141,39 @@ choose_new_password() {
     done
 }
 
+restart_existing() {
+    say "Existing Portal detected; updating without touching tmux sessions."
+    stop_pidfile "$CONFIG_DIR/daemon.pid"
+
+    if [ "$HUB_WAS_RUNNING" -eq 1 ]; then
+        hub_pid="$(cat "$CONFIG_DIR/hub.pid" 2>/dev/null || true)"
+        password=""
+        if [ "$OS" = linux ] && [ -n "$hub_pid" ] && [ -r "/proc/$hub_pid/environ" ]; then
+            password="$(tr '\000' '\n' < "/proc/$hub_pid/environ" | sed -n 's/^PORTAL_PASSWORD=//p' | head -n1)"
+        fi
+        if [ -z "$password" ]; then
+            secret "Portal password (needed once to restart the web hub): "
+            password="$REPLY"
+        fi
+        stop_pidfile "$CONFIG_DIR/hub.pid"
+        mkdir -p "$CONFIG_DIR"
+        PORTAL_PASSWORD="$password" PORTAL_ADDR="127.0.0.1:8080" nohup "$BIN" hub >> "$CONFIG_DIR/hub.log" 2>&1 </dev/null &
+        echo $! > "$CONFIG_DIR/hub.pid"
+    fi
+
+    "$BIN" >/dev/null
+    say "✓ Portal updated"
+    say "✓ tmux sessions and scheduled tmux actions were left running"
+    exit 0
+}
+
 say "Installing Portal to $BIN"
 install_portal
 install_tmux
+if [ "$EXISTING" -eq 1 ]; then
+    restart_existing
+fi
+
 say ""
 say "Portal setup:"
 say "  1) Create a new Portal with a public Tailscale Funnel URL"
