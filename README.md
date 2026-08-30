@@ -1,4 +1,4 @@
-# Portal
+# Portal 🌀
 
 Your `tmux` sessions, in a browser.
 
