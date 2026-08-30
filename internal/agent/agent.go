@@ -376,7 +376,7 @@ func (c *connection) scheduleInput(session, text string, delaySeconds int64, rep
 		return err
 	}
 	script := fmt.Sprintf(
-		"sleep %d; i=1; while [ $i -le %d ]; do tmux send-keys -t %s -l -- %s && tmux send-keys -t %s Enter || break; i=$((i+1)); if [ $i -le %d ]; then sleep %d; fi; done; tmux set-option -gu %s",
+		"sleep %d; i=1; while [ $i -le %d ]; do tmux send-keys -t %s -l -- %s && sleep 0.2 && tmux send-keys -t %s Enter || break; i=$((i+1)); if [ $i -le %d ]; then sleep %d; fi; done; tmux set-option -gu %s",
 		delaySeconds,
 		repeat,
 		shellQuote(pane),
