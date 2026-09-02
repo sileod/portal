@@ -350,6 +350,10 @@ func runMultiHubCommand() (bool, error) {
 		return true, nil
 	case "hubs":
 		return true, printHubs()
+	case "help", "-h", "--help":
+		usage()
+		fmt.Print("portal hubs                  list configured Portal hubs\nportal hub-add URL --password P add another active hub\nportal hub-rm URL             remove a secondary hub\n")
+		return true, nil
 	case "open":
 		return true, openFastestHub()
 	case "expose":

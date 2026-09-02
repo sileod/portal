@@ -40,7 +40,10 @@ portal NAME                  create/reuse a terminal session
 portal NAME -- COMMAND...    create/reuse a session running COMMAND
 portal ls                    list Portal sessions
 portal rm NAME               kill a Portal session
-portal open                  open Portal in your browser
+portal open                  open the fastest reachable Portal hub
+portal hubs                  list configured hubs
+portal hub-add URL           add another active hub
+portal hub-rm URL            remove a secondary hub
 portal host NAME             change this machine's Portal label
 portal host NAME --tailscale also rename the Funnel hostname
 ```
@@ -51,21 +54,44 @@ You can still attach locally at any time:
 tmux attach -t codex
 ```
 
+## Multiple hubs / high availability
+
+A terminal host can connect to several Portal hubs at the same time. Every configured hub gets its own outbound agent connection and therefore sees the same machines and tmux sessions.
+
+Add a second hub to a machine with:
+
+```bash
+portal hub-add https://portal-home.example.com --password 'your Portal password'
+```
+
+Run that on each terminal host that should remain reachable through the second hub. `portal hubs` shows the configured endpoints and `portal hub-rm URL` removes a secondary one.
+
+`portal open` probes all configured hubs concurrently and opens the lowest-latency healthy one. If your home hub is reachable locally, it will normally win over a more distant hub; if it is down, another reachable hub is used instead.
+
+To promote an already joined machine into another hub, expose Portal on it with the same Portal password. Portal preserves its previous primary hub as a secondary connection when doing this. Other terminal hosts still need `portal hub-add NEW_HUB_URL` once so they enroll with the new hub.
+
+Browser login sessions are intentionally local to each hub. If you put a generic reverse proxy/load balancer in front of several hubs, use session affinity for browser/WebSocket traffic. Direct hub URLs plus `portal open` avoid that dependency and give local-first routing.
+
 ## Web UI
 
 Portal stays intentionally small and terminal-first.
 
 - vertical tabs by default
 - create, rename, and kill sessions
+- copy selected terminal text with Ctrl/Cmd+C; Ctrl-C still interrupts when there is no selection
+- explicit copy and paste buttons, plus normal browser paste handling
 - unread activity + last terminal activity time
 - sort tabs by name or recent activity
 - schedule arbitrary text + Enter for later
 - repeat a scheduled send at an interval
 - see pending schedules on the session and in the Portal tab
+- update Portal on any connected host from the Portal settings page
 - light/dark/system theme
 - configurable tab width and tmux status-bar color
 
 A scheduled send is harness-agnostic. For example, schedule `proceed` in `5h`, optionally repeated every `10m`.
+
+The web updater runs the standard Portal installer in a temporary Portal-managed tmux session. On success that session removes itself; on failure it stays open so the installer output can be inspected. Existing tmux sessions are not stopped by an update.
 
 ## Persistence
 
@@ -75,7 +101,7 @@ Scheduled sends are owned by the host's tmux server, so they also survive Portal
 
 ## Update
 
-Run the installer again:
+Use **Update** next to a host in the Portal settings page, or run the installer again:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sileod/portal/main/install.sh | sh
@@ -103,6 +129,7 @@ Portal treats the public URL as a remote-shell login surface:
 - failed login/enrollment attempts are throttled per client IP with exponential backoff
 - browser logins mint random, server-side expiring sessions
 - terminal hosts receive an independent random 256-bit bearer credential after password enrollment over HTTPS
+- additional-hub bearer credentials are stored locally in the Portal config directory with mode `0600`
 - cookies are HttpOnly + SameSite=Strict and terminal WebSockets require the authenticated browser session
 
 Traffic is encrypted in transit with HTTPS/WSS. Portal does not yet provide end-to-end encryption between browser and terminal host, so the hub can currently see terminal bytes.
