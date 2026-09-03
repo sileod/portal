@@ -37,6 +37,11 @@ function pasteIntoActiveTerminal(text){
   if(!x)return false;
   x.term.paste(text);x.term.focus();return true;
 }
+function portalIsMac(){return /Mac|iPhone|iPad|iPod/i.test(navigator.userAgentData?.platform||navigator.platform||'')}
+async function readPortalClipboard(){
+  if(!navigator.clipboard?.readText)throw new Error('clipboard API unavailable');
+  return navigator.clipboard.readText();
+}
 document.addEventListener('copy',e=>{
   const text=portalSelection();
   if(!text||!e.clipboardData)return;
@@ -53,16 +58,35 @@ document.addEventListener('keydown',e=>{
   const copyShortcut=mod&&key==='c'&&(e.metaKey||e.shiftKey||x.term.hasSelection());
   if(copyShortcut&&x.term.hasSelection()){
     e.preventDefault();e.stopImmediatePropagation();copyActiveTerminalSelection();
+  }else if(portalIsMac()&&e.ctrlKey&&!e.metaKey&&key==='v'){
+    e.preventDefault();e.stopImmediatePropagation();
+    readPortalClipboard().then(pasteIntoActiveTerminal).catch(()=>{
+      showStatus('Clipboard read was blocked. Use Cmd+V or the Paste button.',true);x.term.focus();
+    });
   }
 },true);
+function installPortalClipboardKeys(term){
+  term.attachCustomKeyEventHandler(e=>{
+    if(e.type!=='keydown'||e.altKey)return true;
+    const key=(e.key||'').toLowerCase();
+    if(key==='c'&&(e.metaKey||e.ctrlKey&&term.hasSelection()))return false;
+    if(key==='v'&&(e.metaKey||e.ctrlKey))return false;
+    return true;
+  });
+}
+const openPortalTerminal=openTerm;
+openTerm=function(s){
+  const x=openPortalTerminal(s);
+  if(!x.portalClipboardKeys){installPortalClipboardKeys(x.term);x.portalClipboardKeys=true}
+  return x;
+};
 const copyPortalButton=document.querySelector('#copy');
 if(copyPortalButton)copyPortalButton.onclick=copyActiveTerminalSelection;
 const pastePortalButton=document.querySelector('#paste');
 if(pastePortalButton)pastePortalButton.onclick=async()=>{
   if(!activePortalTerminal())return;
   try{
-    if(!navigator.clipboard?.readText)throw new Error('clipboard API unavailable');
-    const text=await navigator.clipboard.readText();pasteIntoActiveTerminal(text);
+    const text=await readPortalClipboard();pasteIntoActiveTerminal(text);
   }catch{
     showStatus('Clipboard read was blocked. Focus the terminal and use Ctrl/Cmd+V or the browser Paste command.',true);
     activePortalTerminal()?.term.focus();
