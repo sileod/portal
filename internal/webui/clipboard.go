@@ -5,7 +5,6 @@ import "bytes"
 func init() {
 	const toolNeedle = `      <button class="tool" id="newtab" title="New terminal">+</button>`
 	const tools = `      <button class="tool" id="newtab" title="New terminal">+</button>
-      <button class="tool" id="copy" title="Copy selected terminal text">⧉</button>
       <button class="tool" id="paste" title="Paste clipboard into active terminal">⎘</button>`
 	IndexHTML = bytes.Replace(IndexHTML, []byte(toolNeedle), []byte(tools), 1)
 
@@ -65,23 +64,25 @@ document.addEventListener('keydown',e=>{
     });
   }
 },true);
-function installPortalClipboardKeys(term){
-  term.attachCustomKeyEventHandler(e=>{
+function installPortalClipboard(x){
+  x.term.attachCustomKeyEventHandler(e=>{
     if(e.type!=='keydown'||e.altKey)return true;
     const key=(e.key||'').toLowerCase();
-    if(key==='c'&&(e.metaKey||e.ctrlKey&&term.hasSelection()))return false;
+    if(key==='c'&&(e.metaKey||e.ctrlKey&&x.term.hasSelection()))return false;
     if(key==='v'&&(e.metaKey||e.ctrlKey))return false;
     return true;
+  });
+  x.el.addEventListener('mouseup',()=>{
+    const text=x.term.getSelection();if(!text)return;
+    writePortalClipboard(text).then(ok=>{if(!ok)showStatus('Clipboard write was blocked by the browser.',true)});
   });
 }
 const openPortalTerminal=openTerm;
 openTerm=function(s){
   const x=openPortalTerminal(s);
-  if(!x.portalClipboardKeys){installPortalClipboardKeys(x.term);x.portalClipboardKeys=true}
+  if(!x.portalClipboard){installPortalClipboard(x);x.portalClipboard=true}
   return x;
 };
-const copyPortalButton=document.querySelector('#copy');
-if(copyPortalButton)copyPortalButton.onclick=copyActiveTerminalSelection;
 const pastePortalButton=document.querySelector('#paste');
 if(pastePortalButton)pastePortalButton.onclick=async()=>{
   if(!activePortalTerminal())return;

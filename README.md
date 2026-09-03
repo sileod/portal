@@ -78,8 +78,8 @@ Portal stays intentionally small and terminal-first.
 
 - vertical tabs by default
 - create, rename, and kill sessions
-- copy selected terminal text with Ctrl/Cmd+C; Ctrl-C still interrupts when there is no selection
-- explicit copy and paste buttons, plus normal browser paste handling
+- copy terminal text automatically by selecting it; Ctrl/Cmd+C also works, while Ctrl-C still interrupts when there is no selection
+- explicit paste button, plus normal Windows/Linux Ctrl+V and macOS Cmd+V handling
 - unread activity + last terminal activity time
 - sort tabs by name or recent activity
 - schedule arbitrary text + Enter for later
