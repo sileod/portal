@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -152,14 +153,14 @@ func run() error {
 	if err := ensureDaemon(); err != nil {
 		return err
 	}
-	fmt.Printf("✓ %s:%s\n%s\n", cfg.Host, name, cfg.URL)
-	return nil
+	fmt.Printf("✓ %s:%s\nWeb: %s\n", cfg.Host, name, portalSessionURL(cfg.URL, cfg.Host, name))
+	return attachSession(name)
 }
 
 func usage() {
 	fmt.Print(`portal                        first-run setup, then show the central URL
-portal NAME                   create/keep a terminal tab
-portal NAME -- COMMAND...     create/keep a tab running COMMAND
+portal NAME                   create/reuse a terminal and attach to it
+portal NAME -- COMMAND...     create/reuse, run COMMAND, and attach
 portal ls                     list local portal sessions
 portal rm NAME                remove a session
 portal open                   open the central URL
@@ -358,6 +359,33 @@ func createSession(name string, command []string) error {
 		}
 	}
 	return markPortalSession(name)
+}
+
+func attachSession(name string) error {
+	// Detached use (scripts, launchers, cron) keeps the old create-only behavior.
+	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+		return nil
+	}
+	fmt.Fprintln(os.Stderr, "Attaching to tmux. Detach anytime with Ctrl-b, then d.")
+	args := []string{"attach-session", "-t", name}
+	if os.Getenv("TMUX") != "" {
+		args = []string{"switch-client", "-t", name}
+	}
+	cmd := exec.Command("tmux", args...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return cmd.Run()
+}
+
+func portalSessionURL(base, host, session string) string {
+	u, err := url.Parse(base)
+	if err != nil {
+		return base
+	}
+	q := u.Query()
+	q.Set("host", host)
+	q.Set("session", session)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 func markPortalSession(name string) error {

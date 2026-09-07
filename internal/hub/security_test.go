@@ -37,3 +37,15 @@ func TestAuthBackoff(t *testing.T) {
 		t.Fatalf("authWait after success = %v, want 0", got)
 	}
 }
+
+func TestSafeBrowserNext(t *testing.T) {
+	want := "/?host=gpu-box&session=work"
+	if got := safeBrowserNext(want); got != want {
+		t.Fatalf("safeBrowserNext = %q, want %q", got, want)
+	}
+	for _, unsafe := range []string{"https://evil.example/", "//evil.example/", "/other", ""} {
+		if got := safeBrowserNext(unsafe); got != "/" {
+			t.Fatalf("safeBrowserNext(%q) = %q, want /", unsafe, got)
+		}
+	}
+}

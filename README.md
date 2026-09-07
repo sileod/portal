@@ -30,7 +30,9 @@ portal monitor -- htop
 portal gpu -- nvtop
 ```
 
-`portal NAME` creates or reuses a persistent tmux session named `NAME`. If `NAME` is an executable, Portal runs it automatically.
+`portal NAME` creates or reuses a persistent tmux session named `NAME`, then attaches your terminal to it. If `NAME` is an executable, Portal runs it automatically. Detach without stopping it with tmux's `Ctrl-b`, then `d` shortcut. In non-interactive scripts, Portal creates the session without attaching.
+
+The printed Web link points directly to that session. It is placed first, highlighted, and focused in the browser, even if the host takes a moment to reconnect.
 
 Useful commands:
 
@@ -77,6 +79,8 @@ Browser login sessions are intentionally local to each hub. If you put a generic
 Portal stays intentionally small and terminal-first.
 
 - vertical tabs by default
+- session deep links that prioritize and focus the requested tab
+- a machine/session overview with copyable local tmux resume commands
 - create, rename, and kill sessions
 - copy terminal text automatically by selecting it; Ctrl/Cmd+C also works, while Ctrl-C still interrupts when there is no selection
 - explicit paste button, plus normal Windows/Linux Ctrl+V and macOS Cmd+V handling

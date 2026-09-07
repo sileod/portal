@@ -28,8 +28,8 @@ const controlCapability = "controls-v1"
 
 const (
 	browserSessionTTL = 30 * 24 * time.Hour
-	authAttemptTTL     = 24 * time.Hour
-	maxAuthDelay       = 5 * time.Minute
+	authAttemptTTL    = 24 * time.Hour
+	maxAuthDelay      = 5 * time.Minute
 )
 
 type agentConn struct {
@@ -160,7 +160,8 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.browserOK(r) {
-		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		next := r.URL.RequestURI()
+		http.Redirect(w, r, "/login?next="+url.QueryEscape(next), http.StatusSeeOther)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -168,6 +169,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	next := safeBrowserNext(r.URL.Query().Get("next"))
 	if r.Method == http.MethodPost {
 		ip := clientIP(r)
 		if wait := s.authWait(ip); wait > 0 {
@@ -203,16 +205,27 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			SameSite: http.SameSiteStrictMode,
 			MaxAge:   int(browserSessionTTL / time.Second),
 		})
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		http.Redirect(w, r, next, http.StatusSeeOther)
 		return
 	}
 
 	if s.browserOK(r) {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		http.Redirect(w, r, next, http.StatusSeeOther)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = fmt.Fprint(w, loginPage(""))
+}
+
+func safeBrowserNext(next string) string {
+	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
+		return "/"
+	}
+	u, err := url.Parse(next)
+	if err != nil || u.IsAbs() || u.Host != "" || u.Path != "/" {
+		return "/"
+	}
+	return u.RequestURI()
 }
 
 func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
