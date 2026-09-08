@@ -15,6 +15,9 @@ func TestClipboardControlsInjected(t *testing.T) {
 		[]byte(`x.term.paste(text)`),
 		[]byte(`installPortalClipboard(x)`),
 		[]byte(`term.attachCustomKeyEventHandler`),
+		[]byte(`x.el.addEventListener('mouseup'`),
+		[]byte(`const text=x.term.getSelection();if(!text)return;`),
+		[]byte(`writePortalClipboard(text).then(ok=>`),
 		[]byte(`portalIsMac()`),
 		[]byte(`e.ctrlKey&&!e.metaKey&&key==='v'`),
 		[]byte(`navigator.clipboard?.writeText`),
@@ -24,9 +27,6 @@ func TestClipboardControlsInjected(t *testing.T) {
 		if !bytes.Contains(IndexHTML, needle) {
 			t.Fatalf("IndexHTML missing %q", needle)
 		}
-	}
-	if bytes.Contains(IndexHTML, []byte(`addEventListener('mouseup'`)) {
-		t.Fatal("selecting terminal text must not trigger clipboard work or clear the selection")
 	}
 }
 
