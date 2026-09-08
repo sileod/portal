@@ -28,8 +28,11 @@ func TestClipboardControlsInjected(t *testing.T) {
 	}
 }
 
-func TestBackgroundRefreshDoesNotRefocusTerminal(t *testing.T) {
-	if !bytes.Contains(IndexHTML, []byte(`activate(active,false)`)) {
-		t.Fatal("background refresh must not refocus and clear the active terminal selection")
+func TestBackgroundRefreshDoesNotReactivateTerminal(t *testing.T) {
+	if bytes.Contains(IndexHTML, []byte(`activate(active,false)`)) {
+		t.Fatal("background refresh must not hide and reactivate the terminal because that clears its selection")
+	}
+	if !bytes.Contains(IndexHTML, []byte(`if(x)x.s=currentSession`)) {
+		t.Fatal("background refresh must update the active session in place")
 	}
 }

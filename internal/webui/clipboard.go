@@ -89,7 +89,7 @@ function installPortalClipboard(x){
   });
   x.el.addEventListener('mouseup',()=>{
     const text=x.term.getSelection();if(!text)return;
-    writePortalClipboard(text).then(ok=>{if(!ok)showStatus('Clipboard write was blocked by the browser.',true)});
+    if(navigator.clipboard?.writeText)navigator.clipboard.writeText(text).catch(()=>{});
   });
 }
 const openPortalTerminal=openTerm;
