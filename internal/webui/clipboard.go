@@ -90,12 +90,6 @@ function installPortalClipboard(x){
     if(key==='v'&&(e.metaKey||e.ctrlKey))return false;
     return true;
   });
-  x.el.addEventListener('mouseup',()=>{
-    const text=x.term.getSelection();if(!text)return;
-    writePortalClipboard(text).then(ok=>{
-      showStatus(ok?'Copied terminal selection.':'Clipboard write was blocked by the browser.',!ok);x.term.focus();
-    });
-  });
 }
 const openPortalTerminal=openTerm;
 openTerm=function(s){
