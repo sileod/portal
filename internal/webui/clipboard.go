@@ -13,16 +13,19 @@ func init() {
 	const script = `<script>
 function activePortalTerminal(){return terms.get(active)||null}
 function portalSelection(){const x=activePortalTerminal();return x?x.term.getSelection():''}
+let portalPendingCopy='';
 async function writePortalClipboard(text){
   if(!text)return false;
-  try{
-    if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(text);return true}
-  }catch{}
   const ta=document.createElement('textarea');
   ta.value=text;ta.setAttribute('readonly','');ta.style.position='fixed';ta.style.opacity='0';ta.style.pointerEvents='none';
   document.body.appendChild(ta);ta.select();ta.setSelectionRange(0,ta.value.length);
-  let ok=false;try{ok=document.execCommand('copy')}catch{}
-  ta.remove();return ok;
+  portalPendingCopy=text;
+  let ok=false;try{ok=document.execCommand('copy')}catch{}finally{portalPendingCopy='';ta.remove()}
+  if(ok)return true;
+  try{
+    if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(text);return true}
+  }catch{}
+  return false;
 }
 async function copyActiveTerminalSelection(){
   const text=portalSelection();
@@ -56,7 +59,7 @@ function promptPortalPaste(){
   actions.append(cancel,send);box.append(label,ta,actions);shade.appendChild(box);document.body.appendChild(shade);ta.focus();
 }
 document.addEventListener('copy',e=>{
-  const text=portalSelection();
+  const text=portalPendingCopy||portalSelection();
   if(!text||!e.clipboardData)return;
   e.clipboardData.setData('text/plain',text);e.preventDefault();
 },true);
