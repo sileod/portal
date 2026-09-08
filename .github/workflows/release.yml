@@ -36,7 +36,7 @@ jobs:
           CGO_ENABLED: 0
         run: |
           go mod tidy
-          go build -trimpath -ldflags="-s -w -X github.com/sileod/portal/internal/buildinfo.Version=${GITHUB_SHA}" -o portal ./cmd/portal
+          go build -trimpath -ldflags="-s -w -X github.com/sileod/portal/internal/buildinfo.Version=v${GITHUB_RUN_NUMBER} -X github.com/sileod/portal/internal/buildinfo.Revision=${GITHUB_SHA}" -o portal ./cmd/portal
           tar -czf portal_${GOOS}_${GOARCH}.tar.gz portal
       - uses: actions/upload-artifact@v4
         with:

@@ -7,6 +7,7 @@ import (
 
 func TestClipboardControlsInjected(t *testing.T) {
 	for _, needle := range [][]byte{
+		[]byte(`id="copy"`),
 		[]byte(`id="paste"`),
 		[]byte(`addEventListener('copy'`),
 		[]byte(`addEventListener('paste'`),
@@ -24,9 +25,6 @@ func TestClipboardControlsInjected(t *testing.T) {
 		if !bytes.Contains(IndexHTML, needle) {
 			t.Fatalf("IndexHTML missing %q", needle)
 		}
-	}
-	if bytes.Contains(IndexHTML, []byte(`id="copy"`)) {
-		t.Fatal("IndexHTML must not contain a separate copy button")
 	}
 }
 

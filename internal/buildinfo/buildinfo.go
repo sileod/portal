@@ -5,12 +5,20 @@ import (
 	"strings"
 )
 
-// Version can be set at build time. Current falls back to Go's embedded VCS
-// revision so local builds still identify the source they came from.
-var Version = ""
+// Version and Revision are set for release builds. Current falls back to Go's
+// embedded VCS revision so local builds still identify their source.
+var (
+	Version  = ""
+	Revision = ""
+)
 
 func Current() string {
-	if version := short(Version); version != "" {
+	version := strings.TrimSpace(Version)
+	revision := shortRevision(Revision)
+	if version != "" {
+		if revision != "" {
+			return version + " (" + revision + ")"
+		}
 		return version
 	}
 	info, ok := debug.ReadBuildInfo()
@@ -19,16 +27,18 @@ func Current() string {
 	}
 	for _, setting := range info.Settings {
 		if setting.Key == "vcs.revision" {
-			return short(setting.Value)
+			if revision := shortRevision(setting.Value); revision != "" {
+				return "dev (" + revision + ")"
+			}
 		}
 	}
 	return "dev"
 }
 
-func short(version string) string {
-	version = strings.TrimSpace(version)
-	if len(version) > 12 {
-		return version[:12]
+func shortRevision(revision string) string {
+	revision = strings.TrimSpace(revision)
+	if len(revision) > 7 {
+		return revision[:7]
 	}
-	return version
+	return revision
 }

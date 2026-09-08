@@ -82,7 +82,7 @@ Portal stays intentionally small and terminal-first.
 - session deep links that prioritize and focus the requested tab
 - a machine/session overview with copyable local tmux resume commands
 - create, rename, and kill sessions
-- copy terminal text automatically by selecting it; Ctrl/Cmd+C also works, while Ctrl-C still interrupts when there is no selection
+- copy terminal text automatically by selecting it, with an explicit copy button and Ctrl/Cmd+C; Ctrl-C still interrupts when there is no selection
 - explicit paste button, plus normal Windows/Linux Ctrl+V and macOS Cmd+V handling
 - unread activity + last terminal activity time
 - tab ordering by name, last used, or recent output, plus a one-click mark-all-read control

@@ -5,6 +5,7 @@ import "bytes"
 func init() {
 	const toolNeedle = `      <button class="tool" id="newtab" title="New terminal">+</button>`
 	const tools = `      <button class="tool" id="newtab" title="New terminal">+</button>
+      <button class="tool" id="copy" title="Copy selected terminal text">⧉</button>
       <button class="tool" id="paste" title="Paste clipboard into active terminal">⎘</button>`
 	IndexHTML = bytes.Replace(IndexHTML, []byte(toolNeedle), []byte(tools), 1)
 
@@ -98,6 +99,8 @@ openTerm=function(s){
   return x;
 };
 const pastePortalButton=document.querySelector('#paste');
+const copyPortalButton=document.querySelector('#copy');
+if(copyPortalButton)copyPortalButton.onclick=copyActiveTerminalSelection;
 if(pastePortalButton)pastePortalButton.onclick=async()=>{
   if(!activePortalTerminal())return;
   try{
