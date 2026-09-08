@@ -1,10 +1,21 @@
 package hub
 
 import (
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestSecurityHeadersAllowXtermCDN(t *testing.T) {
+	w := httptest.NewRecorder()
+	securityHeaders(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(w, httptest.NewRequest("GET", "http://portal/", nil))
+	csp := w.Header().Get("Content-Security-Policy")
+	if strings.Count(csp, "https://cdnjs.cloudflare.com") != 2 {
+		t.Fatalf("CSP must allow the xterm CDN for scripts and styles: %q", csp)
+	}
+}
 
 func TestClientIPUsesProxyAppendedAddress(t *testing.T) {
 	r := httptest.NewRequest("GET", "http://portal/", nil)
