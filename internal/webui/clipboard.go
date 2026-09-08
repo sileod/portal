@@ -87,10 +87,6 @@ function installPortalClipboard(x){
     if(key==='v'&&(e.metaKey||e.ctrlKey))return false;
     return true;
   });
-  x.el.addEventListener('mouseup',()=>{
-    const text=x.term.getSelection();if(!text)return;
-    if(navigator.clipboard?.writeText)navigator.clipboard.writeText(text).catch(()=>{});
-  });
 }
 const openPortalTerminal=openTerm;
 openTerm=function(s){
