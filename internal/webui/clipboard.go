@@ -41,12 +41,26 @@ async function readPortalClipboard(){
   if(!navigator.clipboard?.readText)throw new Error('clipboard API unavailable');
   return navigator.clipboard.readText();
 }
+function promptPortalPaste(){
+  const shade=document.createElement('div'),box=document.createElement('div'),label=document.createElement('label'),ta=document.createElement('textarea'),actions=document.createElement('div'),cancel=document.createElement('button'),send=document.createElement('button');
+  shade.style.cssText='position:fixed;z-index:100;inset:0;display:grid;place-items:center;padding:20px;background:#0008';
+  box.style.cssText='width:min(560px,100%);padding:14px;border:1px solid var(--line);border-radius:6px;background:var(--bg);box-shadow:0 12px 40px #0008';
+  label.textContent='Paste clipboard text';label.style.cssText='display:block;margin-bottom:9px';
+  ta.style.cssText='display:block;width:100%;height:150px;resize:vertical;padding:9px;border:1px solid var(--line);background:var(--active);color:var(--fg);font:inherit';
+  actions.style.cssText='display:flex;justify-content:flex-end;gap:8px;margin-top:10px';
+  cancel.className=send.className='panelbutton';cancel.type=send.type='button';cancel.textContent='Cancel';send.textContent='Paste';
+  const close=()=>{shade.remove();activePortalTerminal()?.term.focus()};
+  cancel.onclick=close;send.onclick=()=>{const text=ta.value;close();pasteIntoActiveTerminal(text)};
+  shade.onclick=e=>{if(e.target===shade)close()};ta.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();close()}else if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();send.click()}};
+  actions.append(cancel,send);box.append(label,ta,actions);shade.appendChild(box);document.body.appendChild(shade);ta.focus();
+}
 document.addEventListener('copy',e=>{
   const text=portalSelection();
   if(!text||!e.clipboardData)return;
   e.clipboardData.setData('text/plain',text);e.preventDefault();
 },true);
 document.addEventListener('paste',e=>{
+  if(e.target instanceof HTMLInputElement||e.target instanceof HTMLTextAreaElement)return;
   const x=activePortalTerminal();if(!x)return;
   const text=e.clipboardData?.getData('text/plain');if(typeof text!=='string')return;
   e.preventDefault();e.stopImmediatePropagation();pasteIntoActiveTerminal(text);
@@ -89,8 +103,7 @@ if(pastePortalButton)pastePortalButton.onclick=async()=>{
   try{
     const text=await readPortalClipboard();pasteIntoActiveTerminal(text);
   }catch{
-    showStatus('Clipboard read was blocked. Focus the terminal and use Ctrl/Cmd+V or the browser Paste command.',true);
-    activePortalTerminal()?.term.focus();
+    promptPortalPaste();
   }
 };
 </script></body>`

@@ -85,11 +85,13 @@ Portal stays intentionally small and terminal-first.
 - copy terminal text automatically by selecting it; Ctrl/Cmd+C also works, while Ctrl-C still interrupts when there is no selection
 - explicit paste button, plus normal Windows/Linux Ctrl+V and macOS Cmd+V handling
 - unread activity + last terminal activity time
+- tab ordering by name, last used, or recent output, plus a one-click mark-all-read control
 - sort tabs by name or recent activity
 - schedule arbitrary text + Enter for later
 - repeat a scheduled send at an interval
 - see pending schedules on the session and in the Portal tab
 - update Portal on any connected host from the Portal settings page
+- see the running hub and host versions in Portal settings
 - light/dark/system theme
 - configurable tab width and tmux status-bar color
 

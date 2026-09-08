@@ -9,6 +9,7 @@ type Message struct {
 	SessionInfos    []Session  `json:"session_infos,omitempty"`
 	Schedules       []Schedule `json:"schedules,omitempty"`
 	Capabilities    []string   `json:"capabilities,omitempty"`
+	Version         string     `json:"version,omitempty"`
 	Data            string     `json:"data,omitempty"`
 	Text            string     `json:"text,omitempty"`
 	Name            string     `json:"name,omitempty"`
@@ -41,8 +42,10 @@ type Schedule struct {
 }
 
 type SessionList struct {
-	HostCount int        `json:"host_count"`
-	Hosts     []string   `json:"hosts"`
-	Sessions  []Session  `json:"sessions"`
-	Schedules []Schedule `json:"schedules,omitempty"`
+	Version      string            `json:"version"`
+	HostCount    int               `json:"host_count"`
+	Hosts        []string          `json:"hosts"`
+	HostVersions map[string]string `json:"host_versions,omitempty"`
+	Sessions     []Session         `json:"sessions"`
+	Schedules    []Schedule        `json:"schedules,omitempty"`
 }

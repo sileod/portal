@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/sileod/portal/internal/agent"
+	"github.com/sileod/portal/internal/buildinfo"
 	"github.com/sileod/portal/internal/hub"
 	"golang.org/x/term"
 )
@@ -55,6 +56,9 @@ func run() error {
 	}
 
 	switch args[0] {
+	case "version", "--version", "-v":
+		fmt.Println(buildinfo.Current())
+		return nil
 	case "hub":
 		state, err := loadOrBootstrapHubAuth()
 		if err != nil {
@@ -164,6 +168,7 @@ portal NAME -- COMMAND...     create/reuse, run COMMAND, and attach
 portal ls                     list local portal sessions
 portal rm NAME                remove a session
 portal open                   open the central URL
+portal version                show the installed Portal version
 portal host NAME              override this host label
 portal host NAME --tailscale  also rename this Funnel/MagicDNS host
 portal link URL --password P  link/relink this host with the Portal password

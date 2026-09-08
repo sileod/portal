@@ -20,6 +20,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/sileod/portal/internal/auth"
+	"github.com/sileod/portal/internal/buildinfo"
 	"github.com/sileod/portal/internal/protocol"
 	"github.com/sileod/portal/internal/webui"
 )
@@ -40,6 +41,7 @@ type agentConn struct {
 	sessionInfos []protocol.Session
 	schedules    []protocol.Schedule
 	capabilities []string
+	version      string
 }
 
 type browserConn struct {
@@ -411,8 +413,10 @@ func (s *Server) handleSessions(w http.ResponseWriter, _ *http.Request) {
 	list := make([]protocol.Session, 0)
 	schedules := make([]protocol.Schedule, 0)
 	hosts := make([]string, 0, len(s.agents))
+	hostVersions := make(map[string]string, len(s.agents))
 	for host, a := range s.agents {
 		hosts = append(hosts, host)
+		hostVersions[host] = a.version
 		if len(a.sessionInfos) > 0 {
 			for _, session := range a.sessionInfos {
 				session.Host = host
@@ -447,10 +451,12 @@ func (s *Server) handleSessions(w http.ResponseWriter, _ *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(protocol.SessionList{
-		HostCount: hostCount,
-		Hosts:     hosts,
-		Sessions:  list,
-		Schedules: schedules,
+		Version:      buildinfo.Current(),
+		HostCount:    hostCount,
+		Hosts:        hosts,
+		HostVersions: hostVersions,
+		Sessions:     list,
+		Schedules:    schedules,
 	})
 }
 
@@ -712,6 +718,7 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 	a := &agentConn{
 		host:         hello.Host,
 		ws:           ws,
+		version:      hello.Version,
 		capabilities: append([]string(nil), hello.Capabilities...),
 	}
 	applyAgentSnapshot(a, hello)

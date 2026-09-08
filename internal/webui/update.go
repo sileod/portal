@@ -19,7 +19,7 @@ function renderPortalUpdateHosts(){
   for(const host of hosts){
     const row=document.createElement('div'),name=document.createElement('span'),button=document.createElement('button');
     row.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 10px;border-bottom:1px solid var(--line)';
-    name.textContent=host;button.className='panelbutton';button.type='button';button.textContent='Update';
+    const version=hostVersions[host]||'unknown';name.textContent=host+' · '+version;button.className='panelbutton';button.type='button';button.textContent='Update';
     button.onclick=async()=>{
       if(!confirm('Update Portal on '+host+'?\n\nTerminal sessions keep running, but Portal on that host will reconnect.'))return;
       const session='portal_update_'+Date.now().toString(36);

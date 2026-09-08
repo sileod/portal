@@ -19,6 +19,7 @@ import (
 
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
+	"github.com/sileod/portal/internal/buildinfo"
 	"github.com/sileod/portal/internal/protocol"
 )
 
@@ -81,6 +82,7 @@ func runOnce(cfg Config) error {
 	}()
 	hello := snapshotMessage("hello")
 	hello.Host = cfg.Host
+	hello.Version = buildinfo.Current()
 	hello.Capabilities = []string{controlCapability}
 	if err := c.write(hello); err != nil {
 		return err

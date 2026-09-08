@@ -19,6 +19,7 @@ func TestClipboardControlsInjected(t *testing.T) {
 		[]byte(`e.ctrlKey&&!e.metaKey&&key==='v'`),
 		[]byte(`navigator.clipboard?.writeText`),
 		[]byte(`navigator.clipboard?.readText`),
+		[]byte(`promptPortalPaste()`),
 	} {
 		if !bytes.Contains(IndexHTML, needle) {
 			t.Fatalf("IndexHTML missing %q", needle)
