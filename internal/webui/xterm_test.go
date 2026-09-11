@@ -5,16 +5,17 @@ import (
 	"testing"
 )
 
-func TestXtermIncludesTmuxMouseSelectionFix(t *testing.T) {
-	if bytes.Contains(IndexHTML, []byte(`xterm@5.3.0`)) {
-		t.Fatal("xterm 5.3 clears tmux mouse selections on mouseup")
-	}
+func TestXtermAllowsPlainDragSelectionWithMouseReporting(t *testing.T) {
 	for _, needle := range [][]byte{
-		[]byte(`cdnjs.cloudflare.com/ajax/libs/xterm/5.4.0/xterm.css`),
-		[]byte(`cdnjs.cloudflare.com/ajax/libs/xterm/5.4.0/xterm.js`),
+		[]byte(`cdn.jsdelivr.net/npm/@xterm/xterm@6.1.0-beta.303/css/xterm.css`),
+		[]byte(`cdn.jsdelivr.net/npm/@xterm/xterm@6.1.0-beta.303/lib/xterm.js`),
+		[]byte(`mouseEventsRequireAlt:true`),
 	} {
 		if !bytes.Contains(IndexHTML, needle) {
 			t.Fatalf("IndexHTML missing %q", needle)
 		}
+	}
+	if bytes.Contains(IndexHTML, []byte(`xterm@5.3.0`)) || bytes.Contains(IndexHTML, []byte(`cdnjs.cloudflare.com/ajax/libs/xterm/5.4.0`)) {
+		t.Fatal("legacy xterm builds must not be served")
 	}
 }
