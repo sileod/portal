@@ -157,3 +157,5 @@ npm ci
 npx playwright install chromium firefox
 npm run test:browser
 ```
+
+Set `PORTAL_BRAVE_PATH` to a Brave executable to include it in the same suite.

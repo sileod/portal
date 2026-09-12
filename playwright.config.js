@@ -18,6 +18,14 @@ module.exports = defineConfig({
   },
   projects: [
     { name: 'chromium', use: { browserName: 'chromium', permissions: ['clipboard-read', 'clipboard-write'] } },
-    { name: 'firefox', use: { browserName: 'firefox' } }
+    { name: 'firefox', use: { browserName: 'firefox' } },
+    ...(process.env.PORTAL_BRAVE_PATH ? [{
+      name: 'brave',
+      use: {
+        browserName: 'chromium',
+        executablePath: process.env.PORTAL_BRAVE_PATH,
+        permissions: ['clipboard-read', 'clipboard-write']
+      }
+    }] : [])
   ]
 });
