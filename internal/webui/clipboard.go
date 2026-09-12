@@ -20,12 +20,11 @@ async function writePortalClipboard(text){
   ta.value=text;ta.setAttribute('readonly','');ta.style.position='fixed';ta.style.opacity='0';ta.style.pointerEvents='none';
   document.body.appendChild(ta);ta.select();ta.setSelectionRange(0,ta.value.length);
   portalPendingCopy=text;
-  let ok=false;try{ok=document.execCommand('copy')}catch{}finally{portalPendingCopy='';ta.remove()}
-  if(ok)return true;
+  let fallbackOK=false;try{fallbackOK=document.execCommand('copy')}catch{}finally{portalPendingCopy='';ta.remove()}
   try{
     if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(text);return true}
   }catch{}
-  return false;
+  return fallbackOK;
 }
 async function copyActiveTerminalSelection(){
   const text=portalSelection();

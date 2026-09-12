@@ -17,3 +17,10 @@ jobs:
       - run: go mod tidy
       - run: go test ./...
       - run: go build ./cmd/portal
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser

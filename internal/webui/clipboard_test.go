@@ -30,7 +30,7 @@ func TestClipboardControlsInjected(t *testing.T) {
 	}
 }
 
-func TestCopyUsesSynchronousFallbackBeforeAsyncClipboard(t *testing.T) {
+func TestCopyUsesSynchronousFallbackAndModernClipboard(t *testing.T) {
 	execCopy := bytes.Index(IndexHTML, []byte(`document.execCommand('copy')`))
 	asyncCopy := bytes.Index(IndexHTML, []byte(`navigator.clipboard?.writeText`))
 	if execCopy < 0 || asyncCopy < 0 || execCopy > asyncCopy {
@@ -38,6 +38,12 @@ func TestCopyUsesSynchronousFallbackBeforeAsyncClipboard(t *testing.T) {
 	}
 	if !bytes.Contains(IndexHTML, []byte(`const text=portalPendingCopy||portalSelection()`)) {
 		t.Fatal("the synchronous copy event must use the explicitly requested text")
+	}
+	if bytes.Contains(IndexHTML, []byte(`if(ok)return true`)) {
+		t.Fatal("copy must not trust the deprecated execCommand result without trying the modern Clipboard API")
+	}
+	if !bytes.Contains(IndexHTML, []byte(`return fallbackOK`)) {
+		t.Fatal("copy must retain execCommand as a fallback for restricted Clipboard APIs")
 	}
 }
 

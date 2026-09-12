@@ -147,3 +147,13 @@ Go 1.22+ is only needed to build Portal from source.
 ```bash
 go build -o portal ./cmd/portal
 ```
+
+The browser regression suite uses a loopback-only fixture with synthetic host,
+session, and terminal data; it never connects to local tmux sessions or Portal
+credentials.
+
+```bash
+npm ci
+npx playwright install chromium
+npm run test:browser
+```
