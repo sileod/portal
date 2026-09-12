@@ -89,6 +89,36 @@ function installPortalClipboard(x){
     if(key==='v'&&(e.metaKey||e.ctrlKey))return false;
     return true;
   });
+  installPortalMouseSelection(x);
+}
+function portalTerminalCell(x,e){
+  const screen=x.term.element?.querySelector('.xterm-screen');if(!screen)return null;
+  const r=screen.getBoundingClientRect();if(!r.width||!r.height)return null;
+  const col=Math.max(0,Math.min(x.term.cols-1,Math.floor((e.clientX-r.left)*x.term.cols/r.width)));
+  const viewportRow=Math.max(0,Math.min(x.term.rows-1,Math.floor((e.clientY-r.top)*x.term.rows/r.height)));
+  return{col,row:x.term.buffer.active.viewportY+viewportRow};
+}
+function installPortalMouseSelection(x){
+  x.term.element.addEventListener('mousedown',down=>{
+    if(down.button!==0||down.altKey||x.term.modes.mouseTrackingMode==='none')return;
+    const anchor=portalTerminalCell(x,down);if(!anchor)return;
+    let moved=false;
+    const move=e=>{
+      const point=portalTerminalCell(x,e);if(!point)return;
+      const a=anchor.row*x.term.cols+anchor.col,b=point.row*x.term.cols+point.col;
+      if(a===b)return;
+      moved=true;const start=Math.min(a,b),end=Math.max(a,b);
+      x.term.select(start%x.term.cols,Math.floor(start/x.term.cols),end-start);
+      e.preventDefault();e.stopImmediatePropagation();
+    };
+    const up=e=>{
+      document.removeEventListener('mousemove',move,true);document.removeEventListener('mouseup',up,true);
+      if(!moved)x.term.clearSelection();
+      e.preventDefault();e.stopImmediatePropagation();
+    };
+    document.addEventListener('mousemove',move,true);document.addEventListener('mouseup',up,true);
+    down.preventDefault();down.stopImmediatePropagation();
+  },true);
 }
 const openPortalTerminal=openTerm;
 openTerm=function(s){

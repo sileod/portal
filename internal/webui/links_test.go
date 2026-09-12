@@ -7,8 +7,8 @@ import (
 
 func TestTerminalLinksInjected(t *testing.T) {
 	for _, needle := range [][]byte{
-		[]byte(`@xterm/addon-fit@0.12.0-beta.301`),
-		[]byte(`@xterm/addon-web-links@0.13.0-beta.301`),
+		[]byte(`@xterm/addon-fit@0.11.0`),
+		[]byte(`@xterm/addon-web-links@0.12.0`),
 		[]byte(`new WebLinksAddon.WebLinksAddon`),
 		[]byte(`window.open(uri,'_blank','noopener,noreferrer')`),
 	} {

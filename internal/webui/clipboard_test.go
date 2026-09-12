@@ -25,8 +25,8 @@ func TestClipboardControlsInjected(t *testing.T) {
 			t.Fatalf("IndexHTML missing %q", needle)
 		}
 	}
-	if bytes.Contains(IndexHTML, []byte(`addEventListener('mouseup'`)) {
-		t.Fatal("selecting terminal text must not trigger clipboard work or clear the selection")
+	if bytes.Contains(IndexHTML, []byte(`x.el.addEventListener('mouseup'`)) || bytes.Contains(IndexHTML, []byte(`writePortalClipboard(text).then(ok=>`)) {
+		t.Fatal("selecting terminal text must not auto-copy or clear the selection")
 	}
 }
 

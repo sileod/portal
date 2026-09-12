@@ -58,4 +58,23 @@ test('terminal fits its viewport and copies selections', async ({ page, browserN
   if (browserName === 'chromium') {
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(keyboardSelection);
   }
+
+  await page.evaluate(() => activePortalTerminal().term.clearSelection());
+  await page.keyboard.down('Alt');
+  await page.mouse.move(box.x + 8, box.y + 8);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 245, box.y + 8, { steps: 12 });
+  await page.mouse.up();
+  await page.keyboard.up('Alt');
+  expect(await page.evaluate(() => portalSelection())).toBe('');
+
+  await page.evaluate(() => new Promise(resolve => {
+    activePortalTerminal().term.write('\x1b[?1000l\x1b[?1002l\x1b[?1006l', resolve);
+  }));
+  await expect.poll(() => page.evaluate(() => activePortalTerminal().term.modes.mouseTrackingMode)).toBe('none');
+  await page.mouse.move(box.x + 8, box.y + 8);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 245, box.y + 8, { steps: 12 });
+  await page.mouse.up();
+  expect(await page.evaluate(() => portalSelection())).toContain('clipboard fixture text');
 });
