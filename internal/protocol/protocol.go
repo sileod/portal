@@ -18,6 +18,7 @@ type Message struct {
 	DelaySeconds    int64      `json:"delay_seconds,omitempty"`
 	Repeat          int        `json:"repeat,omitempty"`
 	IntervalSeconds int64      `json:"interval_seconds,omitempty"`
+	ScheduleID      string     `json:"schedule_id,omitempty"`
 	Cols            uint16     `json:"cols,omitempty"`
 	Rows            uint16     `json:"rows,omitempty"`
 	Error           string     `json:"error,omitempty"`
@@ -39,6 +40,7 @@ type Schedule struct {
 	FirstAt         int64  `json:"first_at"`
 	Repeat          int    `json:"repeat"`
 	IntervalSeconds int64  `json:"interval_seconds,omitempty"`
+	Cancelable      bool   `json:"cancelable,omitempty"`
 }
 
 type SessionList struct {

@@ -82,7 +82,7 @@ Portal stays intentionally small and terminal-first.
 - session deep links that prioritize and focus the requested tab
 - a machine/session overview with copyable local tmux resume commands
 - create, rename, and kill sessions
-- plain-drag selects terminal text even in mouse-aware apps; Alt-drag sends mouse input to the app
+- left-button drag selects terminal text even in mouse-aware apps, with or without Alt/Shift
 - copy selected terminal text with the explicit copy button or Ctrl/Cmd+C; Ctrl-C still interrupts when there is no selection
 - explicit paste button, plus normal Windows/Linux Ctrl+V and macOS Cmd+V handling
 - unread activity + last terminal activity time
@@ -91,6 +91,7 @@ Portal stays intentionally small and terminal-first.
 - schedule arbitrary text + Enter for later
 - repeat a scheduled send at an interval
 - see pending schedules on the session and in the Portal tab
+- cancel scheduled sends created by cancellation-aware Portal versions
 - update Portal on any connected host from the Portal settings page
 - see the running hub and host versions in Portal settings
 - light/dark/system theme

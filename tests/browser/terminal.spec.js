@@ -5,7 +5,6 @@ test('terminal fits its viewport and copies selections', async ({ page, browserN
   page.on('pageerror', error => pageErrors.push(error.message));
 
   await page.goto('/');
-  await page.locator('.tab').click();
   const screen = page.locator('.xterm-screen');
   await expect(screen).toBeVisible();
   await expect.poll(() => page.evaluate(() => (
@@ -36,6 +35,15 @@ test('terminal fits its viewport and copies selections', async ({ page, browserN
   await page.waitForTimeout(1700);
   expect(await page.evaluate(() => portalSelection())).toBe(pointerSelection);
 
+  await page.evaluate(() => activePortalTerminal().term.clearSelection());
+  await page.keyboard.down('Alt');
+  await page.mouse.move(box.x + 8, box.y + 8);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 245, box.y + 8, { steps: 12 });
+  await page.mouse.up();
+  await page.keyboard.up('Alt');
+  expect(await page.evaluate(() => portalSelection())).toContain('clipboard fixture text');
+
   await page.evaluate(() => {
     window.portalObservedCopies = [];
     document.addEventListener('copy', event => {
@@ -59,14 +67,35 @@ test('terminal fits its viewport and copies selections', async ({ page, browserN
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(keyboardSelection);
   }
 
+  if (browserName === 'chromium') {
+    await page.evaluate(() => navigator.clipboard.writeText('Portal synthetic paste payload'));
+    await page.locator('#paste').click();
+  } else {
+    await page.evaluate(() => {
+      const event = new Event('paste', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'clipboardData', {
+        value: { getData: type => type === 'text/plain' ? 'Portal synthetic paste payload' : '' }
+      });
+      document.dispatchEvent(event);
+    });
+  }
+  await expect.poll(() => page.evaluate(() => {
+    const terminal = activePortalTerminal().term;
+    const lines = [];
+    for (let row = 0; row < terminal.buffer.active.length; row++) {
+      lines.push(terminal.buffer.active.getLine(row)?.translateToString(true) || '');
+    }
+    return lines.join('\n');
+  })).toContain('Portal paste round trip received');
+
   await page.evaluate(() => activePortalTerminal().term.clearSelection());
-  await page.keyboard.down('Alt');
+  await page.keyboard.down('Shift');
   await page.mouse.move(box.x + 8, box.y + 8);
   await page.mouse.down();
   await page.mouse.move(box.x + 245, box.y + 8, { steps: 12 });
   await page.mouse.up();
-  await page.keyboard.up('Alt');
-  expect(await page.evaluate(() => portalSelection())).toBe('');
+  await page.keyboard.up('Shift');
+  expect(await page.evaluate(() => portalSelection())).toContain('clipboard fixture text');
 
   await page.evaluate(() => new Promise(resolve => {
     activePortalTerminal().term.write('\x1b[?1000l\x1b[?1002l\x1b[?1006l', resolve);

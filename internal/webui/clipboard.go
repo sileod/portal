@@ -100,7 +100,7 @@ function portalTerminalCell(x,e){
 }
 function installPortalMouseSelection(x){
   x.term.element.addEventListener('mousedown',down=>{
-    if(down.button!==0||down.altKey||x.term.modes.mouseTrackingMode==='none')return;
+    if(down.button!==0||x.term.modes.mouseTrackingMode==='none')return;
     const anchor=portalTerminalCell(x,down);if(!anchor)return;
     let moved=false;
     const move=e=>{
@@ -121,11 +121,14 @@ function installPortalMouseSelection(x){
   },true);
 }
 const openPortalTerminal=openTerm;
-openTerm=function(s){
-  const x=openPortalTerminal(s);
+function ensurePortalTerminalControls(x){
   if(!x.portalClipboard){installPortalClipboard(x);x.portalClipboard=true}
   return x;
+}
+openTerm=function(s){
+  return ensurePortalTerminalControls(openPortalTerminal(s));
 };
+for(const x of terms.values())ensurePortalTerminalControls(x);
 const pastePortalButton=document.querySelector('#paste');
 const copyPortalButton=document.querySelector('#copy');
 if(copyPortalButton)copyPortalButton.onclick=copyActiveTerminalSelection;

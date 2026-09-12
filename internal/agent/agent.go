@@ -113,6 +113,8 @@ func runOnce(cfg Config) error {
 			c.finishAction(m.ID, c.createSession(m.Name, m.Command), true)
 		case "schedule_input":
 			c.finishAction(m.ID, c.scheduleInput(m.Session, m.Text, m.DelaySeconds, m.Repeat, m.IntervalSeconds), true)
+		case "cancel_schedule":
+			c.finishAction(m.ID, c.cancelSchedule(m.ScheduleID), true)
 		case "status_color":
 			c.finishAction(m.ID, c.setStatusColor(m.Value), false)
 		}
@@ -373,14 +375,26 @@ func (c *connection) scheduleInput(session, text string, delaySeconds int64, rep
 		FirstAt:         now + delaySeconds,
 		Repeat:          repeat,
 		IntervalSeconds: intervalSeconds,
+		Cancelable:      true,
 	}
 	if err := c.saveSchedule(schedule); err != nil {
 		return err
 	}
-	script := fmt.Sprintf(
-		"sleep %d; i=1; while [ $i -le %d ]; do tmux send-keys -t %s -l -- %s && sleep 0.2 && tmux send-keys -t %s Enter || break; i=$((i+1)); if [ $i -le %d ]; then sleep %d; fi; done; tmux set-option -gu %s",
+	script := scheduleScript(option, pane, text, delaySeconds, repeat, intervalSeconds)
+	out, err := exec.Command("tmux", "run-shell", "-b", script).CombinedOutput()
+	if err != nil {
+		_ = exec.Command("tmux", "set-option", "-gu", option).Run()
+		return fmt.Errorf("tmux schedule: %s", commandError(err, out))
+	}
+	return nil
+}
+
+func scheduleScript(option, pane, text string, delaySeconds int64, repeat int, intervalSeconds int64) string {
+	return fmt.Sprintf(
+		"sleep %d; i=1; while [ $i -le %d ]; do test -n \"$(tmux show-options -gqv %s)\" || exit 0; tmux send-keys -t %s -l -- %s && sleep 0.2 && tmux send-keys -t %s Enter || break; i=$((i+1)); if [ $i -le %d ]; then sleep %d; fi; done; tmux set-option -gu %s",
 		delaySeconds,
 		repeat,
+		shellQuote(option),
 		shellQuote(pane),
 		shellQuote(text),
 		shellQuote(pane),
@@ -388,12 +402,30 @@ func (c *connection) scheduleInput(session, text string, delaySeconds int64, rep
 		intervalSeconds,
 		shellQuote(option),
 	)
-	out, err := exec.Command("tmux", "run-shell", "-b", script).CombinedOutput()
-	if err != nil {
-		_ = exec.Command("tmux", "set-option", "-gu", option).Run()
-		return fmt.Errorf("tmux schedule: %s", commandError(err, out))
+}
+
+func (c *connection) cancelSchedule(id string) error {
+	if !validScheduleID(id) {
+		return errors.New("invalid schedule ID")
 	}
-	return nil
+	c.scheduleMu.Lock()
+	defer c.scheduleMu.Unlock()
+	option := scheduleOption(id)
+	raw, err := exec.Command("tmux", "show-options", "-gqv", option).Output()
+	if err != nil || strings.TrimSpace(string(raw)) == "" {
+		return errors.New("scheduled message not found")
+	}
+	if out, err := exec.Command("tmux", "set-option", "-gu", option).CombinedOutput(); err != nil {
+		return fmt.Errorf("cancel scheduled message: %s", commandError(err, out))
+	}
+	ids := scheduleIDs()
+	kept := ids[:0]
+	for _, existing := range ids {
+		if existing != id {
+			kept = append(kept, existing)
+		}
+	}
+	return writeScheduleIDs(kept)
 }
 
 func (c *connection) saveSchedule(schedule protocol.Schedule) error {

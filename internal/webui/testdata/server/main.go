@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"log"
 	"net"
@@ -35,7 +36,15 @@ func main() {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(webui.IndexHTML)
 	})
-	mux.HandleFunc("/api/sessions", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/api/sessions", func(w http.ResponseWriter, r *http.Request) {
+		schedules := []map[string]any{}
+		if cookie, err := r.Cookie("portal_browser_schedule"); err == nil && cookie.Value == "1" {
+			schedules = append(schedules, map[string]any{
+				"id": "deadbeef", "host": "test-host", "session": "test-session",
+				"text": "synthetic planned message", "created_at": time.Now().Unix(),
+				"first_at": time.Now().Add(time.Hour).Unix(), "repeat": 1, "cancelable": true,
+			})
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"version":       "browser-test",
@@ -45,8 +54,31 @@ func main() {
 			"sessions": []map[string]any{{
 				"host": "test-host", "session": "test-session", "last_activity": time.Now().Unix(),
 			}},
-			"schedules": []any{},
+			"schedules": schedules,
 		})
+	})
+	mux.HandleFunc("/api/test/enable-schedule", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		http.SetCookie(w, &http.Cookie{Name: "portal_browser_schedule", Value: "1", Path: "/", SameSite: http.SameSiteStrictMode})
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("/api/session", func(w http.ResponseWriter, r *http.Request) {
+		var action struct {
+			Action     string `json:"action"`
+			Host       string `json:"host"`
+			ScheduleID string `json:"schedule_id"`
+		}
+		if r.Method != http.MethodPost || json.NewDecoder(r.Body).Decode(&action) != nil ||
+			action.Action != "cancel_schedule" || action.Host != "test-host" || action.ScheduleID != "deadbeef" {
+			http.Error(w, "bad synthetic action", http.StatusBadRequest)
+			return
+		}
+		http.SetCookie(w, &http.Cookie{Name: "portal_browser_schedule", Value: "0", Path: "/", SameSite: http.SameSiteStrictMode})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
 	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool {
 		return r.Host == addr
@@ -63,8 +95,14 @@ func main() {
 			return
 		}
 		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
+			_, data, err := conn.ReadMessage()
+			if err != nil {
 				return
+			}
+			if bytes.Contains(data, []byte("Portal synthetic paste payload")) {
+				if err := conn.WriteMessage(websocket.TextMessage, []byte("\r\nPortal paste round trip received\r\n")); err != nil {
+					return
+				}
 			}
 		}
 	})

@@ -462,16 +462,17 @@ func (s *Server) handleSessions(w http.ResponseWriter, _ *http.Request) {
 }
 
 type sessionActionRequest struct {
-	Action   string `json:"action"`
-	Host     string `json:"host,omitempty"`
-	Session  string `json:"session,omitempty"`
-	Name     string `json:"name,omitempty"`
-	Command  string `json:"command,omitempty"`
-	Delay    string `json:"delay,omitempty"`
-	Text     string `json:"text,omitempty"`
-	Repeat   int    `json:"repeat,omitempty"`
-	Interval string `json:"interval,omitempty"`
-	Value    string `json:"value,omitempty"`
+	Action     string `json:"action"`
+	Host       string `json:"host,omitempty"`
+	Session    string `json:"session,omitempty"`
+	Name       string `json:"name,omitempty"`
+	Command    string `json:"command,omitempty"`
+	Delay      string `json:"delay,omitempty"`
+	Text       string `json:"text,omitempty"`
+	Repeat     int    `json:"repeat,omitempty"`
+	Interval   string `json:"interval,omitempty"`
+	Value      string `json:"value,omitempty"`
+	ScheduleID string `json:"schedule_id,omitempty"`
 }
 
 func (s *Server) handleSessionAction(w http.ResponseWriter, r *http.Request) {
@@ -548,6 +549,37 @@ func (s *Server) handleSessionAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if !hasCapability(a, controlCapability) {
 		http.Error(w, "update Portal on host "+a.host+" to use this control", http.StatusConflict)
+		return
+	}
+	if req.Action == "cancel_schedule" {
+		if !validScheduleID(req.ScheduleID) {
+			http.Error(w, "invalid schedule ID", http.StatusBadRequest)
+			return
+		}
+		s.mu.RLock()
+		found := false
+		cancelable := false
+		for _, schedule := range a.schedules {
+			if schedule.ID == req.ScheduleID {
+				found = true
+				cancelable = schedule.Cancelable
+				break
+			}
+		}
+		s.mu.RUnlock()
+		if !found {
+			http.Error(w, "scheduled message not found", http.StatusNotFound)
+			return
+		}
+		if !cancelable {
+			http.Error(w, "this message predates cancellation support; let it run or recreate it after updating Portal", http.StatusConflict)
+			return
+		}
+		if err := s.callAgent(a, protocol.Message{Type: "cancel_schedule", ScheduleID: req.ScheduleID}); err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		writeOK(w)
 		return
 	}
 
@@ -661,6 +693,18 @@ func validSessionName(name string) bool {
 	}
 	for _, r := range name {
 		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+func validScheduleID(id string) bool {
+	if id == "" || len(id) > 64 {
+		return false
+	}
+	for _, r := range id {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
 			return false
 		}
 	}
