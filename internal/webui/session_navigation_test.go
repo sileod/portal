@@ -20,3 +20,16 @@ func TestSessionDeepLinkAndOverview(t *testing.T) {
 		}
 	}
 }
+
+func TestUnexpectedTerminalDisconnectReloadsWhenPortalReturns(t *testing.T) {
+	for _, needle := range [][]byte{
+		[]byte(`function reloadWhenPortalReturns()`),
+		[]byte(`if(r.ok||r.status===401){location.reload();return}`),
+		[]byte(`if(!x.closing)reloadWhenPortalReturns()`),
+		[]byte(`x.closing=true;x.ws.close()`),
+	} {
+		if !bytes.Contains(IndexHTML, needle) {
+			t.Fatalf("IndexHTML missing reconnect behavior %q", needle)
+		}
+	}
+}

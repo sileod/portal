@@ -60,3 +60,17 @@ func TestSafeBrowserNext(t *testing.T) {
 		}
 	}
 }
+
+func TestIndexIsNotCachedAcrossPortalUpdates(t *testing.T) {
+	s := New("unused", "token")
+	s.sessions["browser"] = time.Now().Add(time.Hour)
+	r := httptest.NewRequest(http.MethodGet, "http://portal/", nil)
+	r.AddCookie(&http.Cookie{Name: "portal_session", Value: "browser"})
+	w := httptest.NewRecorder()
+
+	s.handleIndex(w, r)
+
+	if got := w.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+}

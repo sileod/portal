@@ -7,7 +7,6 @@ module.exports = defineConfig({
   reporter: process.env.CI ? 'github' : 'line',
   use: {
     baseURL: 'http://127.0.0.1:18082',
-    permissions: ['clipboard-read', 'clipboard-write'],
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure'
   },
@@ -17,5 +16,8 @@ module.exports = defineConfig({
     reuseExistingServer: false,
     timeout: 120000
   },
-  projects: [{ name: 'chromium', use: { browserName: 'chromium' } }]
+  projects: [
+    { name: 'chromium', use: { browserName: 'chromium', permissions: ['clipboard-read', 'clipboard-write'] } },
+    { name: 'firefox', use: { browserName: 'firefox' } }
+  ]
 });

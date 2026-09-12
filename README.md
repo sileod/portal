@@ -154,6 +154,6 @@ credentials.
 
 ```bash
 npm ci
-npx playwright install chromium
+npx playwright install chromium firefox
 npm run test:browser
 ```

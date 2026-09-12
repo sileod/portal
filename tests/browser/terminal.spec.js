@@ -1,6 +1,6 @@
 const { test, expect } = require('@playwright/test');
 
-test('terminal fits its viewport and copies selections', async ({ page }) => {
+test('terminal fits its viewport and copies selections', async ({ page, browserName }) => {
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));
 
@@ -11,6 +11,7 @@ test('terminal fits its viewport and copies selections', async ({ page }) => {
   await expect.poll(() => page.evaluate(() => (
     activePortalTerminal()?.term.buffer.active.getLine(0)?.translateToString(true) || ''
   ))).toContain('Portal clipboard fixture text');
+  await expect.poll(() => page.evaluate(() => activePortalTerminal()?.term.modes.mouseTrackingMode)).toBe('drag');
 
   const fitRatios = () => page.evaluate(() => {
     const terminal = document.querySelector('.term.active').getBoundingClientRect();
@@ -31,9 +32,21 @@ test('terminal fits its viewport and copies selections', async ({ page }) => {
   await page.mouse.up();
   const pointerSelection = await page.evaluate(() => portalSelection());
   expect(pointerSelection).toContain('clipboard fixture text');
+  await expect(page.locator('.xterm-selection > div')).not.toHaveCount(0);
+  await page.waitForTimeout(1700);
+  expect(await page.evaluate(() => portalSelection())).toBe(pointerSelection);
 
+  await page.evaluate(() => {
+    window.portalObservedCopies = [];
+    document.addEventListener('copy', event => {
+      window.portalObservedCopies.push(event.clipboardData?.getData('text/plain') || '');
+    });
+  });
   await page.locator('#copy').click();
-  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(pointerSelection);
+  await expect.poll(() => page.evaluate(() => window.portalObservedCopies.at(-1))).toBe(pointerSelection);
+  if (browserName === 'chromium') {
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(pointerSelection);
+  }
 
   const keyboardSelection = await page.evaluate(() => {
     const terminal = activePortalTerminal().term;
@@ -41,5 +54,8 @@ test('terminal fits its viewport and copies selections', async ({ page }) => {
     return terminal.getSelection();
   });
   await page.keyboard.press('Control+c');
-  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(keyboardSelection);
+  await expect.poll(() => page.evaluate(() => window.portalObservedCopies.at(-1))).toBe(keyboardSelection);
+  if (browserName === 'chromium') {
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(keyboardSelection);
+  }
 });

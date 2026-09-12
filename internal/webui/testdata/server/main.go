@@ -57,7 +57,9 @@ func main() {
 			return
 		}
 		defer conn.Close()
-		if err := conn.WriteMessage(websocket.TextMessage, []byte("Portal clipboard fixture text\r\nsecond synthetic line\r\n")); err != nil {
+		// Match tmux mouse mode so plain-drag selection cannot pass accidentally in
+		// the terminal's easier, mouse-reporting-disabled state.
+		if err := conn.WriteMessage(websocket.TextMessage, []byte("\x1b[?1000h\x1b[?1002h\x1b[?1006hPortal clipboard fixture text\r\nsecond synthetic line\r\n")); err != nil {
 			return
 		}
 		for {
