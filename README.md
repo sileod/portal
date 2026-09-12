@@ -151,8 +151,9 @@ go build -o portal ./cmd/portal
 ```
 
 The browser regression suite uses a loopback-only fixture with synthetic host,
-session, and terminal data; it never connects to local tmux sessions or Portal
-credentials.
+session, and terminal data; it never connects to existing tmux sessions or Portal
+credentials. Install tmux to run the PTY test: it creates a separate server on a
+temporary socket with an empty configuration, and removes only that test server.
 
 ```bash
 npm ci

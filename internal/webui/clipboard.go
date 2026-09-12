@@ -13,6 +13,10 @@ func init() {
 	const script = `<script>
 function activePortalTerminal(){return terms.get(active)||null}
 function portalSelection(){const x=activePortalTerminal();return x?x.term.getSelection():''}
+function portalEditingField(target){
+  return target instanceof Element&&!target.closest('.xterm')&&
+    (target.matches('input,textarea')||target.isContentEditable);
+}
 let portalPendingCopy='';
 async function writePortalClipboard(text){
   if(!text)return false;
@@ -58,17 +62,19 @@ function promptPortalPaste(){
   actions.append(cancel,send);box.append(label,ta,actions);shade.appendChild(box);document.body.appendChild(shade);ta.focus();
 }
 document.addEventListener('copy',e=>{
+  if(!portalPendingCopy&&portalEditingField(e.target))return;
   const text=portalPendingCopy||portalSelection();
   if(!text||!e.clipboardData)return;
   e.clipboardData.setData('text/plain',text);e.preventDefault();
 },true);
 document.addEventListener('paste',e=>{
-  if(e.target instanceof HTMLInputElement||e.target instanceof HTMLTextAreaElement)return;
+  if(portalEditingField(e.target))return;
   const x=activePortalTerminal();if(!x)return;
   const text=e.clipboardData?.getData('text/plain');if(typeof text!=='string')return;
   e.preventDefault();e.stopImmediatePropagation();pasteIntoActiveTerminal(text);
 },true);
 document.addEventListener('keydown',e=>{
+  if(portalEditingField(e.target))return;
   const x=activePortalTerminal();if(!x||e.altKey)return;
   const key=(e.key||'').toLowerCase(),mod=e.ctrlKey||e.metaKey;
   const copyShortcut=mod&&key==='c'&&(e.metaKey||e.shiftKey||x.term.hasSelection());
@@ -101,6 +107,7 @@ function portalTerminalCell(x,e){
 function installPortalMouseSelection(x){
   x.term.element.addEventListener('mousedown',down=>{
     if(down.button!==0||x.term.modes.mouseTrackingMode==='none')return;
+    x.term.focus();
     const anchor=portalTerminalCell(x,down);if(!anchor)return;
     let moved=false;
     const move=e=>{

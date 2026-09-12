@@ -1,5 +1,58 @@
 const { test, expect } = require('@playwright/test');
 
+test('terminal selection does not hijack copying from the paste dialog', async ({ page, browserName }) => {
+  test.skip(browserName !== 'chromium', 'Requires browser clipboard permission');
+  await page.goto('/');
+  await expect(page.locator('.xterm-screen')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => activePortalTerminal()?.term.buffer.active.getLine(0)?.translateToString(true))).toContain('Portal clipboard fixture text');
+  await page.evaluate(() => {
+    activePortalTerminal().term.select(0, 0, 6);
+    promptPortalPaste();
+  });
+  await expect.poll(() => page.evaluate(() => portalSelection())).toBe('Portal');
+  const input = page.locator('textarea').last();
+  await input.fill('edited clipboard text');
+  await input.selectText();
+  await page.keyboard.press('Control+c');
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('edited clipboard text');
+});
+
+test('keyboard paste traverses a real isolated tmux PTY', async ({ page, browserName }) => {
+  test.skip(browserName !== 'chromium', 'Requires browser clipboard permission');
+  await page.addInitScript(() => {
+    const Native = WebSocket;
+    window.WebSocket = class extends Native {
+      constructor(url, protocols) { super(url + '&fixture=tmux', protocols); }
+    };
+  });
+  await page.goto('/');
+  const content = () => page.evaluate(() => {
+    const b = activePortalTerminal()?.term.buffer.active;
+    return b ? Array.from({ length: b.length }, (_, i) => b.getLine(i)?.translateToString(true)).join('\n') : '';
+  });
+  await expect.poll(content).toContain('Portal tmux fixture text');
+  await page.evaluate(() => navigator.clipboard.writeText('private synthetic tmux paste'));
+  await page.locator('.xterm-screen').click();
+  await page.keyboard.press('Control+v');
+  await expect.poll(content).toContain('private synthetic tmux paste');
+});
+
+test('keyboard paste reaches the focused terminal', async ({ page, browserName }) => {
+  test.skip(browserName !== 'chromium', 'Requires browser clipboard permission');
+  await page.goto('/');
+  await expect(page.locator('.xterm-screen')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => activePortalTerminal()?.term.modes.mouseTrackingMode)).toBe('drag');
+  await page.evaluate(() => navigator.clipboard.writeText('Portal synthetic paste payload'));
+  await page.locator('#newtab').focus();
+  await page.locator('.xterm-screen').click();
+  await expect(page.locator('.xterm-helper-textarea')).toBeFocused();
+  await page.keyboard.press('Control+v');
+  await expect.poll(() => page.evaluate(() => {
+    const b = activePortalTerminal().term.buffer.active;
+    return Array.from({ length: b.length }, (_, i) => b.getLine(i)?.translateToString(true)).join('\n');
+  })).toContain('Portal paste round trip received');
+});
+
 test('terminal fits its viewport and copies selections', async ({ page, browserName }) => {
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));

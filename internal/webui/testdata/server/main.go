@@ -8,8 +8,11 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"time"
 
+	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
 	"github.com/sileod/portal/internal/webui"
 )
@@ -89,6 +92,10 @@ func main() {
 			return
 		}
 		defer conn.Close()
+		if r.URL.Query().Get("fixture") == "tmux" {
+			serveTmux(conn)
+			return
+		}
 		// Match tmux mouse mode so plain-drag selection cannot pass accidentally in
 		// the terminal's easier, mouse-reporting-disabled state.
 		if err := conn.WriteMessage(websocket.TextMessage, []byte("\x1b[?1000h\x1b[?1002h\x1b[?1006hPortal clipboard fixture text\r\nsecond synthetic line\r\n")); err != nil {
@@ -109,4 +116,52 @@ func main() {
 
 	log.Printf("Portal browser fixture listening on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, mux))
+}
+
+// Each connection owns a separate server, socket and synthetic pane. Never use
+// the user's default tmux socket, configuration, history or credentials here.
+func serveTmux(conn *websocket.Conn) {
+	dir, err := os.MkdirTemp("", "portal-browser-tmux-")
+	if err != nil {
+		return
+	}
+	defer os.RemoveAll(dir)
+	socket := filepath.Join(dir, "socket")
+	cmd := exec.Command("tmux", "-S", socket, "-f", "/dev/null", "new-session", "-s", "fixture", "sh -c 'printf \"Portal tmux fixture text\\n\"; exec cat'")
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "TMUX=")
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 100, Rows: 30})
+	if err != nil {
+		return
+	}
+	defer func() {
+		_ = exec.Command("tmux", "-S", socket, "kill-server").Run()
+		ptmx.Close()
+		cmd.Wait()
+	}()
+	go func() {
+		defer conn.Close()
+		buf := make([]byte, 32768)
+		for {
+			n, err := ptmx.Read(buf)
+			if n > 0 {
+				if conn.WriteMessage(websocket.BinaryMessage, buf[:n]) != nil {
+					return
+				}
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	for {
+		kind, data, err := conn.ReadMessage()
+		if err != nil {
+			return
+		}
+		if kind == websocket.BinaryMessage {
+			if _, err := ptmx.Write(data); err != nil {
+				return
+			}
+		}
+	}
 }

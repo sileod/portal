@@ -24,7 +24,7 @@ module.exports = defineConfig({
       name: 'brave',
       use: {
         browserName: 'chromium',
-        executablePath: process.env.PORTAL_BRAVE_PATH,
+        launchOptions: { executablePath: process.env.PORTAL_BRAVE_PATH },
         permissions: ['clipboard-read', 'clipboard-write']
       }
     }] : [])
