@@ -20,13 +20,15 @@ func TestClipboardControlsInjected(t *testing.T) {
 		[]byte(`navigator.clipboard?.writeText`),
 		[]byte(`navigator.clipboard?.readText`),
 		[]byte(`promptPortalPaste()`),
+		[]byte(`autoCopyPortalSelection(x)`),
+		[]byte(`installPortalViewportProtection(x)`),
 	} {
 		if !bytes.Contains(IndexHTML, needle) {
 			t.Fatalf("IndexHTML missing %q", needle)
 		}
 	}
 	if bytes.Contains(IndexHTML, []byte(`x.el.addEventListener('mouseup'`)) || bytes.Contains(IndexHTML, []byte(`writePortalClipboard(text).then(ok=>`)) {
-		t.Fatal("selecting terminal text must not auto-copy or clear the selection")
+		t.Fatal("selecting terminal text must not use the selection-destroying fallback copy path")
 	}
 }
 
@@ -44,6 +46,39 @@ func TestCopyUsesSynchronousFallbackAndModernClipboard(t *testing.T) {
 	}
 	if !bytes.Contains(IndexHTML, []byte(`return fallbackOK`)) {
 		t.Fatal("copy must retain execCommand as a fallback for restricted Clipboard APIs")
+	}
+}
+
+func TestSelectionAutoCopyDoesNotRefocusOrUseFallback(t *testing.T) {
+	start := bytes.Index(IndexHTML, []byte(`function autoCopyPortalSelection(x){`))
+	if start < 0 {
+		t.Fatal("auto-copy helper missing")
+	}
+	end := bytes.Index(IndexHTML[start:], []byte(`async function copyActiveTerminalSelection()`))
+	if end < 0 {
+		t.Fatal("auto-copy helper boundary missing")
+	}
+	body := IndexHTML[start : start+end]
+	if !bytes.Contains(body, []byte(`navigator.clipboard.writeText(text).catch(()=>{})`)) {
+		t.Fatal("selection auto-copy must use only the modern Clipboard API")
+	}
+	for _, forbidden := range [][]byte{[]byte(`writePortalClipboard`), []byte(`execCommand`), []byte(`term.focus()`)} {
+		if bytes.Contains(body, forbidden) {
+			t.Fatalf("selection auto-copy must not contain %q", forbidden)
+		}
+	}
+}
+
+func TestStreamingOutputPreservesScrolledViewport(t *testing.T) {
+	for _, needle := range [][]byte{
+		[]byte(`const portalWrite=x.term.write.bind(x.term)`),
+		[]byte(`follow=before.viewportY>=before.baseY`),
+		[]byte(`viewportY=before.viewportY`),
+		[]byte(`x.term.scrollToLine(Math.min(viewportY,after.baseY))`),
+	} {
+		if !bytes.Contains(IndexHTML, needle) {
+			t.Fatalf("viewport protection missing %q", needle)
+		}
 	}
 }
 
