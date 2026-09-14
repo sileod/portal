@@ -30,6 +30,12 @@ async function writePortalClipboard(text){
   }catch{}
   return fallbackOK;
 }
+function autoCopyPortalSelection(x){
+  const text=x?.term?.getSelection()||'';
+  if(!text||!navigator.clipboard?.writeText)return false;
+  navigator.clipboard.writeText(text).catch(()=>{});
+  return true;
+}
 async function copyActiveTerminalSelection(){
   const text=portalSelection();
   if(!text){showStatus('Select terminal text first.',true);return false}
@@ -87,6 +93,17 @@ document.addEventListener('keydown',e=>{
     });
   }
 },true);
+function installPortalViewportProtection(x){
+  if(x.portalWrite)return;
+  const portalWrite=x.term.write.bind(x.term);x.portalWrite=portalWrite;
+  x.term.write=(data,callback)=>{
+    const before=x.term.buffer.active,follow=before.viewportY>=before.baseY,viewportY=before.viewportY;
+    portalWrite(data,()=>{
+      if(!follow){const after=x.term.buffer.active;x.term.scrollToLine(Math.min(viewportY,after.baseY))}
+      if(callback)callback();
+    });
+  };
+}
 function installPortalClipboard(x){
   x.term.attachCustomKeyEventHandler(e=>{
     if(e.type!=='keydown'||e.altKey)return true;
@@ -95,7 +112,11 @@ function installPortalClipboard(x){
     if(key==='v'&&(e.metaKey||e.ctrlKey))return false;
     return true;
   });
+  x.term.element.addEventListener('mouseup',()=>{
+    if(x.term.modes.mouseTrackingMode==='none')autoCopyPortalSelection(x);
+  });
   installPortalMouseSelection(x);
+  installPortalViewportProtection(x);
 }
 function portalTerminalCell(x,e){
   const screen=x.term.element?.querySelector('.xterm-screen');if(!screen)return null;
@@ -120,7 +141,7 @@ function installPortalMouseSelection(x){
     };
     const up=e=>{
       document.removeEventListener('mousemove',move,true);document.removeEventListener('mouseup',up,true);
-      if(!moved)x.term.clearSelection();
+      if(moved)autoCopyPortalSelection(x);else x.term.clearSelection();
       e.preventDefault();e.stopImmediatePropagation();
     };
     document.addEventListener('mousemove',move,true);document.addEventListener('mouseup',up,true);
