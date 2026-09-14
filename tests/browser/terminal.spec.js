@@ -53,6 +53,31 @@ test('keyboard paste reaches the focused terminal', async ({ page, browserName }
   })).toContain('Portal paste round trip received');
 });
 
+test('streaming redraws keep a scrolled-back viewport pinned', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('.xterm-screen')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => activePortalTerminal()?.term.buffer.active.getLine(0)?.translateToString(true))).toContain('Portal clipboard fixture text');
+
+  await page.evaluate(() => new Promise(resolve => {
+    const terminal = activePortalTerminal().term;
+    const lines = Array.from({ length: 200 }, (_, i) => `Portal scrollback fixture ${i}\r\n`).join('');
+    terminal.write(lines, resolve);
+  }));
+  await expect.poll(() => page.evaluate(() => activePortalTerminal().term.buffer.active.baseY)).toBeGreaterThan(20);
+
+  const pinnedViewport = await page.evaluate(() => {
+    const terminal = activePortalTerminal().term;
+    const target = Math.max(0, terminal.buffer.active.baseY - 20);
+    terminal.scrollToLine(target);
+    return terminal.buffer.active.viewportY;
+  });
+
+  await page.evaluate(() => new Promise(resolve => {
+    activePortalTerminal().term.write('\x1b[?2026h\x1b[2JPortal streamed redraw\r\n\x1b[?2026l', resolve);
+  }));
+  await expect.poll(() => page.evaluate(() => activePortalTerminal().term.buffer.active.viewportY)).toBe(pinnedViewport);
+});
+
 test('terminal fits its viewport and copies selections', async ({ page, browserName }) => {
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));
@@ -85,6 +110,9 @@ test('terminal fits its viewport and copies selections', async ({ page, browserN
   const pointerSelection = await page.evaluate(() => portalSelection());
   expect(pointerSelection).toContain('clipboard fixture text');
   await expect(page.locator('.xterm-selection > div')).not.toHaveCount(0);
+  if (browserName === 'chromium') {
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(pointerSelection);
+  }
   await page.waitForTimeout(1700);
   expect(await page.evaluate(() => portalSelection())).toBe(pointerSelection);
 
@@ -158,5 +186,9 @@ test('terminal fits its viewport and copies selections', async ({ page, browserN
   await page.mouse.down();
   await page.mouse.move(box.x + 245, box.y + 8, { steps: 12 });
   await page.mouse.up();
-  expect(await page.evaluate(() => portalSelection())).toContain('clipboard fixture text');
+  const nativeSelection = await page.evaluate(() => portalSelection());
+  expect(nativeSelection).toContain('clipboard fixture text');
+  if (browserName === 'chromium') {
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(nativeSelection);
+  }
 });
