@@ -44,10 +44,85 @@ type agentConn struct {
 	version      string
 }
 
+type browserFrame struct {
+	messageType int
+	data        []byte
+}
+
 type browserConn struct {
-	host    string
-	ws      *websocket.Conn
-	writeMu sync.Mutex
+	host      string
+	ws        *websocket.Conn
+	out       chan browserFrame
+	done      chan struct{}
+	closeOnce sync.Once
+}
+
+func newBrowserConn(host string, ws *websocket.Conn, queue int) *browserConn {
+	return &browserConn{host: host, ws: ws, out: make(chan browserFrame, queue), done: make(chan struct{})}
+}
+
+func (b *browserConn) close() {
+	b.closeOnce.Do(func() {
+		close(b.done)
+		_ = b.ws.Close()
+	})
+}
+
+// enqueue never blocks: the caller is the host's read loop.
+func (b *browserConn) enqueue(f browserFrame) {
+	select {
+	case <-b.done:
+	case b.out <- f:
+	default:
+		log.Printf("browser terminal on %s fell behind; disconnecting it", b.host)
+		b.close()
+	}
+}
+
+func (b *browserConn) writeLoop(pingPeriod time.Duration) {
+	ticker := time.NewTicker(pingPeriod)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-b.done:
+			return
+		case f := <-b.out:
+			_ = b.ws.SetWriteDeadline(time.Now().Add(protocol.WriteWait))
+			if err := b.ws.WriteMessage(f.messageType, f.data); err != nil {
+				b.close()
+				return
+			}
+		case <-ticker.C:
+			if err := b.ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(protocol.WriteWait)); err != nil {
+				b.close()
+				return
+			}
+		}
+	}
+}
+
+// keepAlive makes reads fail once the peer has been silent for pongWait.
+func keepAlive(ws *websocket.Conn, pongWait time.Duration) {
+	_ = ws.SetReadDeadline(time.Now().Add(pongWait))
+	ws.SetPongHandler(func(string) error {
+		return ws.SetReadDeadline(time.Now().Add(pongWait))
+	})
+}
+
+func pingLoop(ws *websocket.Conn, pingPeriod time.Duration, done <-chan struct{}) {
+	ticker := time.NewTicker(pingPeriod)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			if err := ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(protocol.WriteWait)); err != nil {
+				_ = ws.Close()
+				return
+			}
+		}
+	}
 }
 
 type pendingAction struct {
@@ -75,6 +150,13 @@ type Server struct {
 	attempts map[string]authAttempt
 
 	upgrader websocket.Upgrader
+
+	pingPeriod time.Duration
+	pongWait   time.Duration
+	// browserQueue bounds the terminal output buffered for one browser tab. A
+	// tab that falls this far behind is disconnected (its page reconnects)
+	// rather than stalling the host connection that every other tab shares.
+	browserQueue int
 }
 
 func New(passwordHash, agentToken string) *Server {
@@ -87,6 +169,9 @@ func New(passwordHash, agentToken string) *Server {
 		sessions:     map[string]time.Time{},
 		attempts:     map[string]authAttempt{},
 		upgrader:     websocket.Upgrader{CheckOrigin: sameOrigin},
+		pingPeriod:   protocol.PingPeriod,
+		pongWait:     protocol.PongWait,
+		browserQueue: 1024,
 	}
 }
 
@@ -779,11 +864,17 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 	log.Printf("host connected: %s", a.host)
 	defer s.removeAgent(a)
 
+	keepAlive(ws, s.pongWait)
+	done := make(chan struct{})
+	defer close(done)
+	go pingLoop(ws, s.pingPeriod, done)
+
 	for {
 		var m protocol.Message
 		if err := ws.ReadJSON(&m); err != nil {
 			return
 		}
+		_ = ws.SetReadDeadline(time.Now().Add(s.pongWait))
 		switch m.Type {
 		case "sessions":
 			s.mu.Lock()
@@ -871,7 +962,7 @@ func (s *Server) removeAgent(a *agentConn) {
 	s.mu.Unlock()
 
 	for _, b := range closeRoutes {
-		_ = b.ws.Close()
+		b.close()
 	}
 	for _, ch := range pending {
 		select {
@@ -905,7 +996,7 @@ func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 	defer ws.Close()
 
 	id := randomID()
-	b := &browserConn{host: host, ws: ws}
+	b := newBrowserConn(host, ws, s.browserQueue)
 	s.mu.Lock()
 	s.routes[id] = b
 	s.mu.Unlock()
@@ -913,8 +1004,11 @@ func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		delete(s.routes, id)
 		s.mu.Unlock()
+		b.close()
 		_ = s.writeAgent(a, protocol.Message{Type: "close", ID: id})
 	}()
+	keepAlive(ws, s.pongWait)
+	go b.writeLoop(s.pingPeriod)
 
 	if err := s.writeAgent(a, protocol.Message{Type: "open", ID: id, Session: session}); err != nil {
 		return
@@ -925,6 +1019,7 @@ func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return
 		}
+		_ = ws.SetReadDeadline(time.Now().Add(s.pongWait))
 
 		if messageType == websocket.BinaryMessage {
 			if err := s.writeAgent(a, protocol.Message{
@@ -960,19 +1055,22 @@ func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 func (s *Server) writeAgent(a *agentConn, m protocol.Message) error {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
-	return a.ws.WriteJSON(m)
+	_ = a.ws.SetWriteDeadline(time.Now().Add(protocol.WriteWait))
+	err := a.ws.WriteJSON(m)
+	if err != nil {
+		// A timed-out write leaves the connection unusable; drop it so the host reconnects.
+		_ = a.ws.Close()
+	}
+	return err
 }
 
 func (s *Server) writeBrowser(id string, messageType int, data []byte) {
 	s.mu.RLock()
 	b := s.routes[id]
 	s.mu.RUnlock()
-	if b == nil {
-		return
+	if b != nil {
+		b.enqueue(browserFrame{messageType: messageType, data: data})
 	}
-	b.writeMu.Lock()
-	defer b.writeMu.Unlock()
-	_ = b.ws.WriteMessage(messageType, data)
 }
 
 func randomID() string {

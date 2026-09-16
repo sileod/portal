@@ -1,5 +1,16 @@
 package protocol
 
+import "time"
+
+// WebSocket liveness settings shared by hubs and hosts. Each side pings every
+// PingPeriod and drops a peer that has sent nothing (not even a pong) for
+// PongWait, so half-open connections are noticed instead of hanging forever.
+const (
+	WriteWait  = 10 * time.Second
+	PingPeriod = 25 * time.Second
+	PongWait   = 60 * time.Second
+)
+
 type Message struct {
 	Type            string     `json:"type"`
 	ID              string     `json:"id,omitempty"`

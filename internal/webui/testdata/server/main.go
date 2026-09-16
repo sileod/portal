@@ -10,12 +10,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
 	"github.com/sileod/portal/internal/webui"
 )
+
+var reconnectRuns sync.Map
 
 func main() {
 	addr := os.Getenv("PORTAL_BROWSER_TEST_ADDR")
@@ -95,6 +98,19 @@ func main() {
 		if r.URL.Query().Get("fixture") == "tmux" {
 			serveTmux(conn)
 			return
+		}
+		if r.URL.Query().Get("fixture") == "reconnect" {
+			// The first connection drops as a lost network would; the page must redial.
+			if _, seen := reconnectRuns.LoadOrStore(r.URL.Query().Get("run"), true); !seen {
+				_ = conn.WriteMessage(websocket.TextMessage, []byte("Portal first connection\r\n"))
+				return
+			}
+			_ = conn.WriteMessage(websocket.TextMessage, []byte("Portal reconnected\r\n"))
+			for {
+				if _, _, err := conn.ReadMessage(); err != nil {
+					return
+				}
+			}
 		}
 		// Match tmux mouse mode so plain-drag selection cannot pass accidentally in
 		// the terminal's easier, mouse-reporting-disabled state.

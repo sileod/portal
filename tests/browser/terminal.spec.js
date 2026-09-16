@@ -205,3 +205,19 @@ test('terminal fits its viewport and copies selections', async ({ page, browserN
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(nativeSelection);
   }
 });
+
+test('a dropped terminal connection reconnects on its own', async ({ page }) => {
+  await page.addInitScript(() => {
+    const Native = WebSocket, run = Math.random().toString(36).slice(2);
+    window.WebSocket = class extends Native {
+      constructor(url, protocols) { super(url + '&fixture=reconnect&run=' + run, protocols); }
+    };
+  });
+  await page.goto('/');
+  const content = () => page.evaluate(() => {
+    const b = activePortalTerminal()?.term.buffer.active;
+    return b ? Array.from({ length: b.length }, (_, i) => b.getLine(i)?.translateToString(true)).join('\n') : '';
+  });
+  await expect.poll(content).toContain('reconnecting');
+  await expect.poll(content, { timeout: 10000 }).toContain('Portal reconnected');
+});

@@ -91,11 +91,17 @@ func runOnce(cfg Config) error {
 	done := make(chan struct{})
 	defer close(done)
 	go c.publishSessions(done)
+	go c.pingLoop(done)
+	_ = ws.SetReadDeadline(time.Now().Add(protocol.PongWait))
+	ws.SetPongHandler(func(string) error {
+		return ws.SetReadDeadline(time.Now().Add(protocol.PongWait))
+	})
 	for {
 		var m protocol.Message
 		if err := ws.ReadJSON(&m); err != nil {
 			return err
 		}
+		_ = ws.SetReadDeadline(time.Now().Add(protocol.PongWait))
 		switch m.Type {
 		case "open":
 			c.open(m.ID, m.Session)
@@ -144,7 +150,30 @@ func websocketURL(base, path string) (string, error) {
 func (c *connection) write(m protocol.Message) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	return c.ws.WriteJSON(m)
+	_ = c.ws.SetWriteDeadline(time.Now().Add(protocol.WriteWait))
+	err := c.ws.WriteJSON(m)
+	if err != nil {
+		// A timed-out write leaves the connection unusable; closing it makes
+		// runOnce return and reconnect instead of leaving terminals half alive.
+		_ = c.ws.Close()
+	}
+	return err
+}
+
+func (c *connection) pingLoop(done <-chan struct{}) {
+	ticker := time.NewTicker(protocol.PingPeriod)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			if err := c.ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(protocol.WriteWait)); err != nil {
+				_ = c.ws.Close()
+				return
+			}
+		}
+	}
 }
 
 func (c *connection) finishAction(id string, err error, publish bool) {
