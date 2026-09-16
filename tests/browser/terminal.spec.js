@@ -110,6 +110,19 @@ test('terminal fits its viewport and copies selections', async ({ page, browserN
   const pointerSelection = await page.evaluate(() => portalSelection());
   expect(pointerSelection).toContain('clipboard fixture text');
   await expect(page.locator('.xterm-selection > div')).not.toHaveCount(0);
+  // The highlight must contrast with the terminal background in both themes;
+  // xterm's default translucent white is invisible on the light theme.
+  for (const theme of ['light', 'dark']) {
+    const colors = await page.evaluate(async choice => {
+      theme = choice; applyPrefs();
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const selection = getComputedStyle(document.querySelector('.term.active .xterm-selection > div')).backgroundColor;
+      return { selection, background: activePortalTerminal().term.options.theme.background };
+    }, theme);
+    const rgb = colors.selection.match(/\d+/g).slice(0, 3).map(Number);
+    const bg = colors.background.match(/[0-9a-f]{2}/gi).map(h => parseInt(h, 16));
+    expect(Math.max(...rgb.map((c, i) => Math.abs(c - bg[i])))).toBeGreaterThan(40);
+  }
   if (browserName === 'chromium') {
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(pointerSelection);
   }
