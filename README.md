@@ -136,7 +136,7 @@ Portal treats the public URL as a remote-shell login surface:
 
 - passwords are verified with Argon2id, not stored or used as deterministic session keys
 - failed login/enrollment attempts are throttled per client IP with exponential backoff
-- browser logins mint random, server-side expiring sessions
+- browser logins mint random, server-side expiring sessions; the hub stores only their hashes (`hub-sessions.json`, mode 0600) so logins survive hub restarts, and changing the password logs every browser out
 - terminal hosts receive an independent random 256-bit bearer credential after password enrollment over HTTPS
 - additional-hub bearer credentials are stored locally in the Portal config directory with mode `0600`
 - cookies are HttpOnly + SameSite=Strict and terminal WebSockets require the authenticated browser session

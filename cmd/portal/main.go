@@ -68,7 +68,11 @@ func run() error {
 		if addr == "" {
 			addr = ":8080"
 		}
-		return hub.New(state.PasswordHash, state.AgentToken).Run(addr)
+		server := hub.New(state.PasswordHash, state.AgentToken)
+		if err := server.PersistSessions(filepath.Join(configDir(), "hub-sessions.json")); err != nil {
+			return err
+		}
+		return server.Run(addr)
 	case "auth-init":
 		password := firstNonEmpty(os.Getenv("PORTAL_PASSWORD"), os.Getenv("PORTAL_TOKEN"))
 		state, err := ensureHubAuth(password)

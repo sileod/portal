@@ -63,7 +63,7 @@ func TestSafeBrowserNext(t *testing.T) {
 
 func TestIndexIsNotCachedAcrossPortalUpdates(t *testing.T) {
 	s := New("unused", "token")
-	s.sessions["browser"] = time.Now().Add(time.Hour)
+	s.sessions[sessionKey("browser")] = time.Now().Add(time.Hour)
 	r := httptest.NewRequest(http.MethodGet, "http://portal/", nil)
 	r.AddCookie(&http.Cookie{Name: "portal_session", Value: "browser"})
 	w := httptest.NewRecorder()

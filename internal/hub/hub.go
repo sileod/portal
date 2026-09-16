@@ -2,6 +2,7 @@ package hub
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -146,8 +148,10 @@ type Server struct {
 	pending map[string]pendingAction
 
 	authMu   sync.Mutex
-	sessions map[string]time.Time
+	sessions map[string]time.Time // keyed by sessionKey(cookie token)
 	attempts map[string]authAttempt
+	// sessionPath, when set, keeps browser logins across hub restarts.
+	sessionPath string
 
 	upgrader websocket.Upgrader
 
@@ -214,6 +218,79 @@ func sameOrigin(r *http.Request) bool {
 	return err == nil && strings.EqualFold(u.Host, r.Host)
 }
 
+// sessionKey is what the hub stores for a browser login, so the sessions file
+// never holds usable cookie values.
+func sessionKey(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+type sessionFile struct {
+	// Password ties the file to the current password: changing it logs everyone out.
+	Password string           `json:"password"`
+	Sessions map[string]int64 `json:"sessions"`
+}
+
+func (s *Server) passwordID() string {
+	sum := sha256.Sum256([]byte("portal browser sessions\x00" + s.passwordHash))
+	return hex.EncodeToString(sum[:])
+}
+
+// PersistSessions loads browser logins from path and saves them there on every
+// login and logout, so restarting the hub does not log browsers out.
+func (s *Server) PersistSessions(path string) error {
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
+	s.sessionPath = path
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var file sessionFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		log.Printf("ignoring unreadable browser sessions file %s: %v", path, err)
+		return nil
+	}
+	if file.Password != s.passwordID() {
+		return nil
+	}
+	now := time.Now()
+	for key, expires := range file.Sessions {
+		if t := time.Unix(expires, 0); t.After(now) {
+			s.sessions[key] = t
+		}
+	}
+	return nil
+}
+
+func (s *Server) saveSessionsLocked() {
+	if s.sessionPath == "" {
+		return
+	}
+	now := time.Now()
+	file := sessionFile{Password: s.passwordID(), Sessions: map[string]int64{}}
+	for key, expires := range s.sessions {
+		if expires.After(now) {
+			file.Sessions[key] = expires.Unix()
+		} else {
+			delete(s.sessions, key)
+		}
+	}
+	data, err := json.Marshal(file)
+	if err == nil {
+		tmp := filepath.Join(filepath.Dir(s.sessionPath), "."+filepath.Base(s.sessionPath)+".tmp")
+		if err = os.WriteFile(tmp, data, 0600); err == nil {
+			err = os.Rename(tmp, s.sessionPath)
+		}
+	}
+	if err != nil {
+		log.Printf("save browser sessions: %v", err)
+	}
+}
+
 func (s *Server) browserOK(r *http.Request) bool {
 	c, err := r.Cookie("portal_session")
 	if err != nil || c.Value == "" {
@@ -221,10 +298,11 @@ func (s *Server) browserOK(r *http.Request) bool {
 	}
 
 	now := time.Now()
+	key := sessionKey(c.Value)
 	s.authMu.Lock()
-	expires, ok := s.sessions[c.Value]
+	expires, ok := s.sessions[key]
 	if ok && !expires.After(now) {
-		delete(s.sessions, c.Value)
+		delete(s.sessions, key)
 		ok = false
 	}
 	s.authMu.Unlock()
@@ -281,7 +359,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.authMu.Lock()
-		s.sessions[token] = time.Now().Add(browserSessionTTL)
+		s.sessions[sessionKey(token)] = time.Now().Add(browserSessionTTL)
+		s.saveSessionsLocked()
 		s.authMu.Unlock()
 
 		http.SetCookie(w, &http.Cookie{
@@ -345,7 +424,8 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie("portal_session"); err == nil && c.Value != "" {
 		s.authMu.Lock()
-		delete(s.sessions, c.Value)
+		delete(s.sessions, sessionKey(c.Value))
+		s.saveSessionsLocked()
 		s.authMu.Unlock()
 	}
 	http.SetCookie(w, &http.Cookie{
