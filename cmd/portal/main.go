@@ -348,7 +348,7 @@ func createSession(name string, command []string) error {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		return errors.New("tmux is required")
 	}
-	if exec.Command("tmux", "has-session", "-t", name).Run() != nil {
+	if exec.Command("tmux", "has-session", "-t", agent.SessionTarget(name)).Run() != nil {
 		cwd, err := os.Getwd()
 		if err != nil {
 			return err
@@ -372,9 +372,9 @@ func attachSession(name string) error {
 		return nil
 	}
 	fmt.Fprintln(os.Stderr, "Attaching to tmux. Detach anytime with Ctrl-b, then d.")
-	args := []string{"attach-session", "-t", name}
+	args := []string{"attach-session", "-t", agent.SessionTarget(name)}
 	if os.Getenv("TMUX") != "" {
-		args = []string{"switch-client", "-t", name}
+		args = []string{"switch-client", "-t", agent.SessionTarget(name)}
 	}
 	cmd := exec.Command("tmux", args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
@@ -394,19 +394,19 @@ func portalSessionURL(base, host, session string) string {
 }
 
 func markPortalSession(name string) error {
-	if err := exec.Command("tmux", "set-option", "-t", name, "@portal", "1").Run(); err != nil {
+	if err := exec.Command("tmux", "set-option", "-t", agent.SessionTarget(name), "@portal", "1").Run(); err != nil {
 		return err
 	}
 	if out, err := exec.Command("tmux", "show-option", "-gqv", "@portal_status_bg").Output(); err == nil {
 		if color := strings.TrimSpace(string(out)); color != "" {
-			exec.Command("tmux", "set-option", "-t", name, "status-style", "bg="+color).Run()
+			exec.Command("tmux", "set-option", "-t", agent.SessionTarget(name), "status-style", "bg="+color).Run()
 		}
 	}
 	return nil
 }
 
 func isPortalSession(name string) bool {
-	out, err := exec.Command("tmux", "show-option", "-qv", "-t", name, "@portal").Output()
+	out, err := exec.Command("tmux", "show-option", "-qv", "-t", agent.SessionTarget(name), "@portal").Output()
 	return err == nil && strings.TrimSpace(string(out)) == "1"
 }
 
@@ -417,7 +417,7 @@ func killSession(name string) error {
 	if !isPortalSession(name) {
 		return errors.New("not a Portal-managed session")
 	}
-	cmd := exec.Command("tmux", "kill-session", "-t", name)
+	cmd := exec.Command("tmux", "kill-session", "-t", agent.SessionTarget(name))
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
