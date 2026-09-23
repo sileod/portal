@@ -153,6 +153,8 @@ type Server struct {
 	// sessionPath, when set, keeps browser logins across hub restarts.
 	sessionPath string
 
+	notify *notifier
+
 	upgrader websocket.Upgrader
 
 	pingPeriod time.Duration
@@ -172,6 +174,7 @@ func New(passwordHash, agentToken string) *Server {
 		pending:      map[string]pendingAction{},
 		sessions:     map[string]time.Time{},
 		attempts:     map[string]authAttempt{},
+		notify:       newNotifier(),
 		upgrader:     websocket.Upgrader{CheckOrigin: sameOrigin},
 		pingPeriod:   protocol.PingPeriod,
 		pongWait:     protocol.PongWait,
@@ -188,7 +191,13 @@ func (s *Server) Run(addr string) error {
 	mux.HandleFunc("/api/sessions", s.requireBrowser(s.handleSessions))
 	mux.HandleFunc("/api/session", s.requireBrowser(s.handleSessionAction))
 	mux.HandleFunc("/api/terminal", s.requireBrowser(s.handleTerminal))
+	mux.HandleFunc("/api/notify", s.requireBrowser(s.handleNotify))
 	mux.HandleFunc("/api/agent", s.handleAgent)
+	go func() {
+		for range time.Tick(15 * time.Second) {
+			s.notify.tick()
+		}
+	}()
 
 	server := &http.Server{
 		Addr:              addr,
@@ -942,6 +951,10 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("host connected: %s", a.host)
+	s.notify.observe(a.host, a.sessionInfos)
+	if old == nil {
+		s.notify.hostEvent(a.host, true)
+	}
 	defer s.removeAgent(a)
 
 	keepAlive(ws, s.pongWait)
@@ -958,10 +971,14 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 		switch m.Type {
 		case "sessions":
 			s.mu.Lock()
-			if s.agents[a.host] == a {
+			current := s.agents[a.host] == a
+			if current {
 				applyAgentSnapshot(a, m)
 			}
 			s.mu.Unlock()
+			if current {
+				s.notify.observe(a.host, m.SessionInfos)
+			}
 		case "action_result":
 			s.resolveAction(m)
 		case "output":
@@ -1050,6 +1067,7 @@ func (s *Server) removeAgent(a *agentConn) {
 		default:
 		}
 	}
+	s.notify.hostEvent(a.host, false)
 	log.Printf("host disconnected: %s", a.host)
 }
 

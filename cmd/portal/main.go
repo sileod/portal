@@ -72,6 +72,9 @@ func run() error {
 		if err := server.PersistSessions(filepath.Join(configDir(), "hub-sessions.json")); err != nil {
 			return err
 		}
+		if err := server.PersistNotify(filepath.Join(configDir(), "hub-notify.json")); err != nil {
+			return err
+		}
 		return server.Run(addr)
 	case "auth-init":
 		password := firstNonEmpty(os.Getenv("PORTAL_PASSWORD"), os.Getenv("PORTAL_TOKEN"))
