@@ -64,3 +64,32 @@ test('tab dots show which terminals need input, are working, or have news', asyn
   await expect(dot('alpha')).toHaveCount(0);
   await expect(page).toHaveTitle('(1) Portal');
 });
+
+test('the sort button cycles tab orders, starting with newest first', async ({ page }) => {
+  await mockSessions(page, [
+    { session: 'alpha', created: 100 },
+    { session: 'beta', created: 300 },
+    { session: 'gamma', created: 200 },
+  ]);
+  await page.goto('/');
+  await expect.poll(() => tabNames(page)).toEqual(['alpha', 'beta', 'gamma']);
+  await page.locator('#sortTabs').click();
+  await expect.poll(() => tabNames(page)).toEqual(['beta', 'gamma', 'alpha']);
+  await expect(page.locator('#sortTabs')).toHaveAttribute('title', /newest first/);
+  expect(await page.evaluate(() => localStorage.portalTabOrder)).toBe('newest');
+  await page.reload();
+  await expect.poll(() => tabNames(page)).toEqual(['beta', 'gamma', 'alpha']);
+  await page.locator('#sortTabs').click();
+  await expect(page.locator('#sortTabs')).toHaveAttribute('title', /recent output/);
+});
+
+test('newest first falls back to when this browser first saw a terminal', async ({ page }) => {
+  let names = ['alpha', 'beta'];
+  await mockSessions(page, () => names);
+  await page.addInitScript(() => { localStorage.portalTabOrder = 'newest' });
+  await page.goto('/');
+  await expect.poll(() => tabNames(page)).toEqual(['alpha', 'beta']);
+  await page.waitForTimeout(1100);
+  names = ['alpha', 'beta', 'aardvark'];
+  await expect.poll(() => tabNames(page)).toEqual(['aardvark', 'alpha', 'beta']);
+});

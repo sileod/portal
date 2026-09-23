@@ -39,6 +39,8 @@ type Session struct {
 	Host         string `json:"host"`
 	Session      string `json:"session"`
 	LastActivity int64  `json:"last_activity,omitempty"`
+	// Created is when the tmux session was created (Unix seconds).
+	Created int64 `json:"created,omitempty"`
 	// State is "waiting" when the screen shows a prompt for the user,
 	// "working" while the screen keeps changing, and empty when idle.
 	State string `json:"state,omitempty"`

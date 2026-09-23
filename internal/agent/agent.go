@@ -556,17 +556,21 @@ func shellQuote(s string) string {
 }
 
 func sessionInfos() ([]string, []protocol.Session) {
-	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}\t#{@portal}").Output()
+	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}\t#{@portal}\t#{session_created}").Output()
 	if err != nil {
 		return nil, nil
 	}
 	managed := map[string]bool{}
+	created := map[string]int64{}
 	var names []string
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		parts := strings.SplitN(line, "\t", 2)
-		if len(parts) == 2 && parts[1] == "1" && parts[0] != "" {
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) >= 2 && parts[1] == "1" && parts[0] != "" {
 			managed[parts[0]] = true
 			names = append(names, parts[0])
+			if len(parts) == 3 {
+				created[parts[0]], _ = strconv.ParseInt(parts[2], 10, 64)
+			}
 		}
 	}
 	activity := map[string]int64{}
@@ -587,11 +591,11 @@ func sessionInfos() ([]string, []protocol.Session) {
 	for _, name := range names {
 		screen, err := exec.Command("tmux", "capture-pane", "-p", "-t", SessionTarget(name)).Output()
 		if err != nil {
-			infos = append(infos, protocol.Session{Session: name, LastActivity: activity[name]})
+			infos = append(infos, protocol.Session{Session: name, LastActivity: activity[name], Created: created[name]})
 			continue
 		}
 		changed, state := screens.observe(name, string(screen), activity[name], now)
-		infos = append(infos, protocol.Session{Session: name, LastActivity: changed, State: state})
+		infos = append(infos, protocol.Session{Session: name, LastActivity: changed, State: state, Created: created[name]})
 	}
 	screens.prune(names)
 	sort.Strings(names)
