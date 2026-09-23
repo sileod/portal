@@ -81,13 +81,13 @@ Portal stays intentionally small and terminal-first.
 - vertical tabs by default
 - session deep links that prioritize and focus the requested tab
 - a machine/session overview with copyable local tmux resume commands
-- create, rename, and kill sessions
+- create, rename, and kill sessions (× on each tab, or middle-click it)
 - left-button drag selects terminal text even in mouse-aware apps, with or without Alt/Shift
 - selecting terminal text copies it automatically when the browser allows clipboard writes; the explicit copy button and Ctrl/Cmd+C remain available, while Ctrl-C still interrupts when there is no selection
 - explicit paste button, plus normal Windows/Linux Ctrl+V and macOS Cmd+V handling
 - streamed output keeps the viewport pinned while you are reviewing older scrollback
 - unread activity + last terminal activity time
-- tab ordering by name, last used, or recent output, plus a one-click mark-all-read control
+- tab ordering by name, last used, recent output, or a manual order you set by dragging tabs, plus a one-click mark-all-read control
 - sort tabs by name or recent activity
 - schedule arbitrary text + Enter for later
 - repeat a scheduled send at an interval
