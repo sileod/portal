@@ -86,7 +86,8 @@ Portal stays intentionally small and terminal-first.
 - selecting terminal text copies it automatically when the browser allows clipboard writes; the explicit copy button and Ctrl/Cmd+C remain available, while Ctrl-C still interrupts when there is no selection
 - explicit paste button, plus normal Windows/Linux Ctrl+V and macOS Cmd+V handling
 - streamed output keeps the viewport pinned while you are reviewing older scrollback
-- unread activity + last terminal activity time
+- colored tab dots: orange when a terminal shows a prompt waiting for you (agent approvals, `[y/N]`, …; the page title counts them), green while its screen is changing, blue for new output since you last looked
+- last activity time based on real screen changes, so idle TUIs that redraw do not look busy
 - tab ordering by name, last used, recent output, or a manual order you set by dragging tabs, plus a one-click mark-all-read control
 - sort tabs by name or recent activity
 - schedule arbitrary text + Enter for later

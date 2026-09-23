@@ -6,7 +6,8 @@ async function mockSessions(page, names) {
     contentType: 'application/json',
     body: JSON.stringify({
       version: 'browser-test', host_count: 1, hosts: ['test-host'],
-      sessions: names.filter(n => !killed.includes(n)).map(session => ({ host: 'test-host', session })),
+      sessions: (typeof names === 'function' ? names() : names).map(n => typeof n === 'string' ? { session: n } : n)
+        .filter(s => !killed.includes(s.session)).map(s => ({ host: 'test-host', ...s })),
     }),
   }));
   await page.route('/api/session', async route => {
@@ -42,4 +43,24 @@ test('each tab has a close button that kills its session', async ({ page }) => {
   await beta.locator('.tabclose').click();
   await expect.poll(() => killed).toEqual(['beta']);
   await expect.poll(() => tabNames(page)).toEqual(['alpha']);
+});
+
+test('tab dots show which terminals need input, are working, or have news', async ({ page }) => {
+  const now = Math.floor(Date.now() / 1000);
+  let doneActivity = now - 60;
+  await mockSessions(page, () => [
+    { session: 'alpha' },
+    { session: 'asking', state: 'waiting', last_activity: now },
+    { session: 'busy', state: 'working', last_activity: now },
+    { session: 'done', last_activity: doneActivity },
+  ]);
+  await page.goto('/');
+  await expect.poll(() => tabNames(page)).toEqual(['alpha', 'asking', 'busy', 'done']);
+  doneActivity = now;
+  const dot = name => page.locator('.tabwrap', { hasText: name }).locator('.unread');
+  await expect(dot('asking')).toHaveClass(/waiting/);
+  await expect(dot('busy')).toHaveClass(/working/);
+  await expect(dot('done')).toHaveAttribute('title', 'New output since you last looked');
+  await expect(dot('alpha')).toHaveCount(0);
+  await expect(page).toHaveTitle('(1) Portal');
 });

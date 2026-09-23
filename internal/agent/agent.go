@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -581,12 +583,95 @@ func sessionInfos() ([]string, []protocol.Session) {
 		}
 	}
 	var infos []protocol.Session
+	now := time.Now()
 	for _, name := range names {
-		infos = append(infos, protocol.Session{Session: name, LastActivity: activity[name]})
+		screen, err := exec.Command("tmux", "capture-pane", "-p", "-t", SessionTarget(name)).Output()
+		if err != nil {
+			infos = append(infos, protocol.Session{Session: name, LastActivity: activity[name]})
+			continue
+		}
+		changed, state := screens.observe(name, string(screen), activity[name], now)
+		infos = append(infos, protocol.Session{Session: name, LastActivity: changed, State: state})
 	}
+	screens.prune(names)
 	sort.Strings(names)
 	sort.Slice(infos, func(i, j int) bool { return infos[i].Session < infos[j].Session })
 	return names, infos
+}
+
+// workingWindow is how long after its last visible change a screen still
+// counts as busy; spinners and streaming output change it far more often.
+const workingWindow = 6 * time.Second
+
+// promptPattern matches the confirmation prompts coding agents and common
+// CLIs show when they are blocked on the user.
+var promptPattern = regexp.MustCompile(`(?i)do you want to (proceed|make this edit|allow|run|create|apply|continue)|would you like to (run|proceed|make|apply|allow|continue)|allow (once|always|execution)|permission required|waiting for (user )?(confirmation|approval|input)|apply this change\?|\[y/n\]|\(y/n\)|\[yes/no\]|yes, (and )?(proceed|allow|don't ask)|press enter to (confirm|continue)`)
+
+// promptLines is how many trailing non-blank screen lines are searched for a
+// prompt, so an old question that scrolled up does not keep a session flagged.
+const promptLines = 15
+
+// screens remembers each session's visible screen. Its changes are a better
+// activity signal than tmux's window_activity, which many TUIs bump by
+// redrawing identical frames while idle.
+var screens = &screenTracker{seen: map[string]screenState{}}
+
+type screenTracker struct {
+	mu   sync.Mutex
+	seen map[string]screenState
+}
+
+type screenState struct {
+	sum     [sha256.Size]byte
+	changed int64
+}
+
+// observe records a session's screen and returns when it last changed
+// (Unix seconds) and its state. tmuxActivity seeds the first observation.
+func (t *screenTracker) observe(name, screen string, tmuxActivity int64, now time.Time) (int64, string) {
+	sum := sha256.Sum256([]byte(screen))
+	t.mu.Lock()
+	prev, ok := t.seen[name]
+	switch {
+	case !ok:
+		prev = screenState{sum: sum, changed: tmuxActivity}
+	case prev.sum != sum:
+		prev = screenState{sum: sum, changed: now.Unix()}
+	}
+	t.seen[name] = prev
+	t.mu.Unlock()
+	if waitingForInput(screen) {
+		return prev.changed, "waiting"
+	}
+	if ok && now.Sub(time.Unix(prev.changed, 0)) < workingWindow {
+		return prev.changed, "working"
+	}
+	return prev.changed, ""
+}
+
+func (t *screenTracker) prune(names []string) {
+	keep := make(map[string]bool, len(names))
+	for _, name := range names {
+		keep[name] = true
+	}
+	t.mu.Lock()
+	for name := range t.seen {
+		if !keep[name] {
+			delete(t.seen, name)
+		}
+	}
+	t.mu.Unlock()
+}
+
+func waitingForInput(screen string) bool {
+	lines := strings.Split(screen, "\n")
+	var tail []string
+	for i := len(lines) - 1; i >= 0 && len(tail) < promptLines; i-- {
+		if strings.TrimSpace(lines[i]) != "" {
+			tail = append(tail, lines[i])
+		}
+	}
+	return promptPattern.MatchString(strings.Join(tail, "\n"))
 }
 
 func scheduleOption(id string) string {

@@ -39,6 +39,9 @@ type Session struct {
 	Host         string `json:"host"`
 	Session      string `json:"session"`
 	LastActivity int64  `json:"last_activity,omitempty"`
+	// State is "waiting" when the screen shows a prompt for the user,
+	// "working" while the screen keeps changing, and empty when idle.
+	State string `json:"state,omitempty"`
 }
 
 type Schedule struct {
