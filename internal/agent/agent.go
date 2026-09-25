@@ -577,15 +577,19 @@ func sessionInfos() ([]string, []protocol.Session) {
 		}
 	}
 	activity := map[string]int64{}
-	if windows, err := exec.Command("tmux", "list-windows", "-a", "-F", "#{session_name}\t#{window_activity}").Output(); err == nil {
+	size := map[string]string{}
+	if windows, err := exec.Command("tmux", "list-windows", "-a", "-F", "#{session_name}\t#{window_activity}\t#{window_active}\t#{window_width}x#{window_height}").Output(); err == nil {
 		for _, line := range strings.Split(strings.TrimSpace(string(windows)), "\n") {
-			parts := strings.SplitN(line, "\t", 2)
-			if len(parts) != 2 || !managed[parts[0]] {
+			parts := strings.SplitN(line, "\t", 4)
+			if len(parts) < 2 || !managed[parts[0]] {
 				continue
 			}
 			ts, _ := strconv.ParseInt(parts[1], 10, 64)
 			if ts > activity[parts[0]] {
 				activity[parts[0]] = ts
+			}
+			if len(parts) == 4 && parts[2] == "1" {
+				size[parts[0]] = parts[3]
 			}
 		}
 	}
@@ -597,7 +601,7 @@ func sessionInfos() ([]string, []protocol.Session) {
 			infos = append(infos, protocol.Session{Session: name, LastActivity: activity[name], Created: created[name]})
 			continue
 		}
-		changed, state := screens.observe(name, string(screen), activity[name], now)
+		changed, state := screens.observe(name, string(screen), size[name], activity[name], now)
 		infos = append(infos, protocol.Session{Session: name, LastActivity: changed, State: state, Created: created[name]})
 	}
 	screens.prune(names)
@@ -631,25 +635,38 @@ type screenTracker struct {
 type screenState struct {
 	sum     [sha256.Size]byte
 	last    [sha256.Size]byte // the screen before sum
+	size    string
+	resized time.Time
 	changed int64
 }
 
-// observe records a session's screen and returns when it last changed
-// (Unix seconds) and its state. tmuxActivity seeds the first observation.
-// Flipping back to the previous screen is not a change: TUIs that draw their
-// own blinking cursor alternate between two frames while idle.
-func (t *screenTracker) observe(name, screen string, tmuxActivity int64, now time.Time) (int64, string) {
+// resizeSettle is how long after a resize screen changes are put down to
+// the reflow and the app redrawing at its new size rather than to output.
+const resizeSettle = 3 * time.Second
+
+// observe records a session's screen and window size, and returns when the
+// screen last changed (Unix seconds) and its state. tmuxActivity seeds the
+// first observation. Changes that are not output are ignored: a resize (a
+// browser attaching or its window changing reflows the screen), and flipping
+// back to the previous screen, as TUIs that draw their own blinking cursor
+// do while idle.
+func (t *screenTracker) observe(name, screen, size string, tmuxActivity int64, now time.Time) (int64, string) {
 	sum := sha256.Sum256([]byte(screen))
 	t.mu.Lock()
 	prev, ok := t.seen[name]
+	if ok && prev.size != size {
+		prev.size, prev.resized = size, now
+	}
 	switch {
 	case !ok:
-		prev = screenState{sum: sum, last: sum, changed: tmuxActivity}
+		prev = screenState{sum: sum, last: sum, size: size, changed: tmuxActivity}
 	case prev.sum == sum:
+	case now.Sub(prev.resized) < resizeSettle:
+		prev.sum, prev.last = sum, sum
 	case prev.last == sum:
 		prev.sum, prev.last = sum, prev.sum
 	default:
-		prev = screenState{sum: sum, last: prev.sum, changed: now.Unix()}
+		prev.sum, prev.last, prev.changed = sum, prev.sum, now.Unix()
 	}
 	t.seen[name] = prev
 	t.mu.Unlock()
