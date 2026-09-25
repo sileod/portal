@@ -108,7 +108,7 @@ build_current_main() {
     (
         cd "$TMP/portal-main"
         GOTOOLCHAIN=local go mod tidy
-        GOTOOLCHAIN=local go build -o "$TMP/portal" ./cmd/portal
+        CGO_ENABLED=0 GOTOOLCHAIN=local go build -o "$TMP/portal" ./cmd/portal
     )
     install -m 0755 "$TMP/portal" "$BIN"
 }
