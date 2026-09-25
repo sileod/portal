@@ -1,6 +1,9 @@
 package protocol
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // WebSocket liveness settings shared by hubs and hosts. Each side pings every
 // PingPeriod and drops a peer that has sent nothing (not even a pong) for
@@ -67,4 +70,29 @@ type SessionList struct {
 	HostVersions map[string]string `json:"host_versions,omitempty"`
 	Sessions     []Session         `json:"sessions"`
 	Schedules    []Schedule        `json:"schedules,omitempty"`
+}
+
+// HostLabel derives a default host label from a machine's hostname: the DNS
+// domain is dropped, as is a leading segment that the next one repeats
+// ("rack-rack12" becomes "rack12"), and anything but letters, digits, _ and -
+// becomes -.
+func HostLabel(hostname string) string {
+	name, _, _ := strings.Cut(hostname, ".")
+	parts := strings.Split(name, "-")
+	for len(parts) > 1 && parts[0] != "" && strings.HasPrefix(parts[1], parts[0]) {
+		parts = parts[1:]
+	}
+	var b strings.Builder
+	for _, r := range strings.Join(parts, "-") {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	if b.Len() == 0 {
+		return "host"
+	}
+	return b.String()
 }

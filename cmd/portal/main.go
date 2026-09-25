@@ -19,6 +19,7 @@ import (
 	"github.com/sileod/portal/internal/agent"
 	"github.com/sileod/portal/internal/buildinfo"
 	"github.com/sileod/portal/internal/hub"
+	"github.com/sileod/portal/internal/protocol"
 	"golang.org/x/term"
 )
 
@@ -44,6 +45,9 @@ type fileConfig struct {
 }
 
 var hostname = os.Hostname
+
+// defaultHostLabel is the label this machine gets unless one is chosen.
+func defaultHostLabel() string { return protocol.HostLabel(machineName()) }
 
 // machineName identifies this machine among those sharing configDir().
 func machineName() string {
@@ -236,7 +240,7 @@ func interactiveSetup() (config, error) {
 	if err != nil {
 		return config{}, err
 	}
-	host, _ := os.Hostname()
+	host := defaultHostLabel()
 	fmt.Printf("Portal host name [%s]: ", host)
 	if raw, err := reader.ReadString('\n'); err == nil && strings.TrimSpace(raw) != "" {
 		host = strings.TrimSpace(raw)
@@ -263,9 +267,7 @@ func interactiveSetup() (config, error) {
 func link(args []string) error {
 	cfg := config{Token: os.Getenv("PORTAL_TOKEN")}
 	password := os.Getenv("PORTAL_PASSWORD")
-	if h, err := os.Hostname(); err == nil {
-		cfg.Host = h
-	}
+	cfg.Host = defaultHostLabel()
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--password":
@@ -540,7 +542,7 @@ func loadConfig() (config, error) {
 		return cfg, err
 	}
 	if cfg.Host == "" {
-		cfg.Host = machineName()
+		cfg.Host = defaultHostLabel()
 	}
 	if cfg.URL == "" || cfg.Token == "" {
 		return cfg, errNotLinked

@@ -1012,7 +1012,7 @@ func (s *Server) agentLabelLocked(label, machine string) string {
 	if !taken(label) {
 		return label
 	}
-	base := machineLabel(machine)
+	base := protocol.HostLabel(machine)
 	for i := 1; ; i++ {
 		candidate := base
 		if i > 1 {
@@ -1031,23 +1031,6 @@ func (s *Server) machineOf(label string) string {
 		return a.machine
 	}
 	return ""
-}
-
-// machineLabel turns a hostname into a valid host label.
-func machineLabel(machine string) string {
-	var b strings.Builder
-	for _, r := range machine {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('-')
-		}
-	}
-	if b.Len() == 0 {
-		return "host"
-	}
-	return b.String()
 }
 
 func (s *Server) callAgent(a *agentConn, m protocol.Message) error {

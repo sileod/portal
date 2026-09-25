@@ -122,23 +122,23 @@ func TestSecondMachineWithSameLabelDoesNotEvictFirst(t *testing.T) {
 	}
 	agentsLen := func() int { s.mu.RLock(); defer s.mu.RUnlock(); return len(s.agents) }
 
-	connect("magnet10")
+	connect("box-box1")
 	waitFor(t, func() bool { return agentsLen() == 1 })
-	second := connect("magnet.6")
+	second := connect("box-box2.lan")
 	waitFor(t, func() bool { return agentsLen() == 2 })
 	var m protocol.Message
-	if err := second.ReadJSON(&m); err != nil || m.Type != "host" || m.Host != "magnet-6" {
-		t.Fatalf("second machine told %+v, %v; want host magnet-6", m, err)
+	if err := second.ReadJSON(&m); err != nil || m.Type != "host" || m.Host != "box2" {
+		t.Fatalf("second machine told %+v, %v; want host box2", m, err)
 	}
 	s.mu.RLock()
-	first, renamed := s.agents["portal"], s.agents["magnet-6"]
+	first, renamed := s.agents["portal"], s.agents["box2"]
 	s.mu.RUnlock()
-	if first == nil || first.machine != "magnet10" || renamed == nil || renamed.machine != "magnet.6" {
-		t.Fatalf("agents = portal:%v magnet-6:%v", first, renamed)
+	if first == nil || first.machine != "box-box1" || renamed == nil || renamed.machine != "box-box2.lan" {
+		t.Fatalf("agents = portal:%v box2:%v", first, renamed)
 	}
 
 	// A reconnect from the same machine still replaces its old connection.
-	connect("magnet10")
+	connect("box-box1")
 	waitFor(t, func() bool { s.mu.RLock(); defer s.mu.RUnlock(); return s.agents["portal"] != first })
 	if n := agentsLen(); n != 2 {
 		t.Fatalf("agents = %d after reconnect, want 2", n)

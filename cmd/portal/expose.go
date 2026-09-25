@@ -34,7 +34,7 @@ func exposeTailscale(args []string) error {
 	funnelHost := firstNonEmpty(os.Getenv("PORTAL_FUNNEL_HOST"), "portal")
 	portalHost := os.Getenv("PORTAL_HOST")
 	if portalHost == "" {
-		portalHost, _ = os.Hostname()
+		portalHost = defaultHostLabel()
 	}
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -116,7 +116,7 @@ func exposeCloudflare(args []string) error {
 	password := firstNonEmpty(os.Getenv("PORTAL_PASSWORD"), os.Getenv("PORTAL_TOKEN"))
 	portalHost := os.Getenv("PORTAL_HOST")
 	if portalHost == "" {
-		portalHost, _ = os.Hostname()
+		portalHost = defaultHostLabel()
 	}
 	for i := 0; i < len(args); i++ {
 		switch args[i] {

@@ -52,7 +52,7 @@ func TestHostLabelIsPerMachineInSharedConfig(t *testing.T) {
 	if err := saveConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
-	for machine, want := range map[string]string{"m10": "portal", "m6": "six", "m7": "m7"} {
+	for machine, want := range map[string]string{"m10": "portal", "m6": "six", "rack-rack7": "rack7"} {
 		if got := host(machine); got != want {
 			t.Fatalf("%s host = %q, want %q", machine, got, want)
 		}

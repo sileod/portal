@@ -21,6 +21,8 @@ On the first machine, choose **Create a new Portal**. The default setup uses Tai
 
 On another machine, run the same installer and choose **Join an existing Portal**. Enter the Portal URL and the same password. Terminal hosts connect outbound, so they do not need inbound ports.
 
+Each machine is labelled from its hostname (`rack-rack12.lab.org` shows as `rack12`); change it with `portal host NAME`. Machines that share a home directory, e.g. over NFS, are already joined through the shared config and keep their own labels.
+
 ## Use
 
 ```bash
