@@ -71,8 +71,8 @@ func TestPidFromAnotherProcessIsNotTrusted(t *testing.T) {
 	if _, err := os.Stat("/proc/self/cmdline"); err != nil {
 		t.Skip("no /proc")
 	}
-	if daemonRunning() {
-		t.Fatal("daemonRunning trusted a pid that is not a portal daemon")
+	if pid := runningPID("daemon", pidPath(), legacyPIDPath()); pid != 0 {
+		t.Fatalf("runningPID trusted pid %d, which is not a portal daemon", pid)
 	}
 	if got := filepath.Base(pidPath()); got != "daemon-m10.pid" {
 		t.Fatalf("pidPath = %s", got)

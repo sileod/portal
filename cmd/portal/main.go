@@ -581,7 +581,38 @@ func writePID() error {
 }
 
 func daemonPID() int {
-	return runningPID("daemon", pidPath(), legacyPIDPath())
+	if pid := runningPID("daemon", pidPath(), legacyPIDPath()); pid != 0 {
+		return pid
+	}
+	// The pid file may have been overwritten by another machine sharing
+	// configDir() (older versions used one file for all machines).
+	return findDaemonProcess()
+}
+
+// findDaemonProcess returns a `portal daemon` of this user from /proc, or 0.
+func findDaemonProcess() int {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return 0
+	}
+	for _, entry := range entries {
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil || pid == os.Getpid() {
+			continue
+		}
+		if info, err := entry.Info(); err != nil || info.Sys() == nil || info.Sys().(*syscall.Stat_t).Uid != uint32(os.Getuid()) {
+			continue
+		}
+		cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+		if err != nil {
+			continue
+		}
+		args := strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00")
+		if len(args) == 2 && filepath.Base(args[0]) == "portal" && args[1] == "daemon" {
+			return pid
+		}
+	}
+	return 0
 }
 
 func daemonRunning() bool { return daemonPID() != 0 }
