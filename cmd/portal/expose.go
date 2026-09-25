@@ -236,7 +236,7 @@ func ensureHub(password string) error {
 	if _, err := ensureHubAuth(password); err != nil {
 		return err
 	}
-	if processRunning(hubPIDPath()) {
+	if hubRunning() {
 		return nil
 	}
 	if err := os.MkdirAll(configDir(), 0700); err != nil {
@@ -260,7 +260,7 @@ func ensureHub(password string) error {
 		return err
 	}
 	for range 20 {
-		if processRunning(hubPIDPath()) {
+		if hubRunning() {
 			return nil
 		}
 		time.Sleep(25 * time.Millisecond)
@@ -269,7 +269,7 @@ func ensureHub(password string) error {
 }
 
 func ensureCloudflared(key string) error {
-	if processRunning(cloudflarePIDPath()) {
+	if cloudflaredRunning() {
 		return nil
 	}
 	logFile, err := os.OpenFile(cloudflareLogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
@@ -305,13 +305,37 @@ func finishExpose(url, provider, host string) error {
 	return nil
 }
 
-func processRunning(path string) bool {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
+// runningPID returns the first pid recorded in paths that is alive on this
+// machine and whose command line contains arg, or 0. Checking the command
+// line guards against pids written by another machine sharing configDir(),
+// or reused by an unrelated process.
+func runningPID(arg string, paths ...string) int {
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+		if err != nil || pid <= 0 || syscall.Kill(pid, 0) != nil {
+			continue
+		}
+		if cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid)); err == nil {
+			if !containsArg(strings.Split(string(cmdline), "\x00"), arg) {
+				continue
+			}
+		}
+		return pid
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	return err == nil && pid > 0 && syscall.Kill(pid, 0) == nil
+	return 0
+}
+
+func containsArg(args []string, want string) bool {
+	for _, arg := range args {
+		if arg == want {
+			return true
+		}
+	}
+	return false
 }
 
 func firstHTTPS(s string) string {
@@ -340,7 +364,15 @@ func commandOutput(err error, out []byte) string {
 	return err.Error()
 }
 
-func hubPIDPath() string        { return configDir() + "/hub.pid" }
-func hubLogPath() string        { return configDir() + "/hub.log" }
-func cloudflarePIDPath() string { return configDir() + "/cloudflared.pid" }
-func cloudflareLogPath() string { return configDir() + "/cloudflared.log" }
+func hubPIDPath() string        { return machineFile("hub", ".pid") }
+func hubLogPath() string        { return machineFile("hub", ".log") }
+func cloudflarePIDPath() string { return machineFile("cloudflared", ".pid") }
+func cloudflareLogPath() string { return machineFile("cloudflared", ".log") }
+
+func hubRunning() bool {
+	return runningPID("hub", hubPIDPath(), configDir()+"/hub.pid") != 0
+}
+
+func cloudflaredRunning() bool {
+	return runningPID("tunnel", cloudflarePIDPath(), configDir()+"/cloudflared.pid") != 0
+}

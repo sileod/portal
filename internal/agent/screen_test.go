@@ -49,3 +49,26 @@ func TestScreenTrackerIgnoresIdenticalRedraws(t *testing.T) {
 		t.Fatal("prune kept a removed session")
 	}
 }
+
+func TestScreenTrackerIgnoresBlinkingCursor(t *testing.T) {
+	tr := &screenTracker{seen: map[string]screenState{}}
+	start := time.Unix(1000, 0)
+	tr.observe("s", "> █", 900, start)
+	// The first flip is indistinguishable from real output.
+	if changed, _ := tr.observe("s", "> ", 0, start.Add(time.Second)); changed != 1001 {
+		t.Fatalf("first flip changed = %d, want 1001", changed)
+	}
+	for i := 2; i < 20; i++ {
+		frame := "> █"
+		if i%2 == 1 {
+			frame = "> "
+		}
+		changed, state := tr.observe("s", frame, 0, start.Add(time.Duration(i)*time.Second))
+		if changed != 1001 || (i > 7 && state != "") {
+			t.Fatalf("blink %d = %d %q, want 1001 and idle once past the working window", i, changed, state)
+		}
+	}
+	if changed, state := tr.observe("s", "> hi█", 0, start.Add(30*time.Second)); changed != 1030 || state != "working" {
+		t.Fatalf("new output = %d %q, want 1030 working", changed, state)
+	}
+}

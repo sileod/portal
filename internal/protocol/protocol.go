@@ -15,6 +15,7 @@ type Message struct {
 	Type            string     `json:"type"`
 	ID              string     `json:"id,omitempty"`
 	Host            string     `json:"host,omitempty"`
+	Machine         string     `json:"machine,omitempty"`
 	Session         string     `json:"session,omitempty"`
 	Sessions        []string   `json:"sessions,omitempty"`
 	SessionInfos    []Session  `json:"session_infos,omitempty"`

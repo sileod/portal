@@ -37,6 +37,7 @@ const (
 
 type agentConn struct {
 	host         string
+	machine      string
 	ws           *websocket.Conn
 	writeMu      sync.Mutex
 	sessions     []string
@@ -936,6 +937,7 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 
 	a := &agentConn{
 		host:         hello.Host,
+		machine:      hello.Machine,
 		ws:           ws,
 		version:      hello.Version,
 		capabilities: append([]string(nil), hello.Capabilities...),
@@ -943,6 +945,7 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 	applyAgentSnapshot(a, hello)
 
 	s.mu.Lock()
+	a.host = s.agentLabelLocked(hello.Host, hello.Machine)
 	old := s.agents[a.host]
 	s.agents[a.host] = a
 	s.mu.Unlock()
@@ -950,6 +953,10 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 		_ = old.ws.Close()
 	}
 
+	if a.host != hello.Host {
+		log.Printf("host label %s is already used by machine %s; %s connected as %s", hello.Host, s.machineOf(hello.Host), hello.Machine, a.host)
+		_ = s.writeAgent(a, protocol.Message{Type: "host", Host: a.host})
+	}
 	log.Printf("host connected: %s", a.host)
 	s.notify.observe(a.host, a.sessionInfos)
 	if old == nil {
@@ -990,6 +997,57 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 			s.writeBrowser(m.ID, websocket.TextMessage, []byte("\r\n\x1b[31m[portal: "+m.Error+"]\x1b[0m\r\n"))
 		}
 	}
+}
+
+// agentLabelLocked picks the label a connecting agent is registered under.
+// A reconnect from the same machine replaces the old connection, but a second
+// machine claiming a live label (e.g. two hosts sharing an NFS home and thus
+// one config file) gets its own machine name instead of evicting the first,
+// which would otherwise make the two take turns every reconnect.
+func (s *Server) agentLabelLocked(label, machine string) string {
+	taken := func(l string) bool {
+		cur := s.agents[l]
+		return cur != nil && cur.machine != "" && machine != "" && cur.machine != machine
+	}
+	if !taken(label) {
+		return label
+	}
+	base := machineLabel(machine)
+	for i := 1; ; i++ {
+		candidate := base
+		if i > 1 {
+			candidate = fmt.Sprintf("%s-%d", base, i)
+		}
+		if !taken(candidate) {
+			return candidate
+		}
+	}
+}
+
+func (s *Server) machineOf(label string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if a := s.agents[label]; a != nil {
+		return a.machine
+	}
+	return ""
+}
+
+// machineLabel turns a hostname into a valid host label.
+func machineLabel(machine string) string {
+	var b strings.Builder
+	for _, r := range machine {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	if b.Len() == 0 {
+		return "host"
+	}
+	return b.String()
 }
 
 func (s *Server) callAgent(a *agentConn, m protocol.Message) error {

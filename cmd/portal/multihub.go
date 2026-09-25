@@ -316,7 +316,7 @@ func printHubs() error {
 }
 
 func preservePrimaryBeforeExpose() {
-	if processRunning(hubPIDPath()) {
+	if hubRunning() {
 		return
 	}
 	cfg, err := loadConfig()

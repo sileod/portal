@@ -25,10 +25,44 @@ import (
 var errNotLinked = errors.New("not linked")
 
 type config struct {
-	URL         string `json:"url"`
-	Token       string `json:"token"`
-	Host        string `json:"host"`
-	AuthVersion int    `json:"auth_version,omitempty"`
+	URL         string
+	Token       string
+	Host        string
+	AuthVersion int
+}
+
+// fileConfig is config.json. Host labels are kept per machine because a home
+// directory shared over NFS gives every machine the same file; one shared
+// label would make their agents evict each other at the hub. The legacy
+// top-level host still applies to machines without their own entry.
+type fileConfig struct {
+	URL         string            `json:"url"`
+	Token       string            `json:"token"`
+	Host        string            `json:"host,omitempty"`
+	Hosts       map[string]string `json:"hosts,omitempty"`
+	AuthVersion int               `json:"auth_version,omitempty"`
+}
+
+var hostname = os.Hostname
+
+// machineName identifies this machine among those sharing configDir().
+func machineName() string {
+	if name, err := hostname(); err == nil && name != "" {
+		return name
+	}
+	return "local"
+}
+
+func readFileConfig() (fileConfig, error) {
+	var fc fileConfig
+	data, err := os.ReadFile(configPath())
+	if err != nil {
+		return fc, err
+	}
+	if err := json.Unmarshal(data, &fc); err != nil {
+		return fc, fmt.Errorf("read config: %w", err)
+	}
+	return fc, nil
 }
 
 func main() {
@@ -325,7 +359,7 @@ func setHost(args []string) error {
 		if err != nil {
 			return fmt.Errorf("tailscale set hostname: %s", strings.TrimSpace(string(out)))
 		}
-		if processRunning(hubPIDPath()) {
+		if hubRunning() {
 			out, err = privilegedCommand("tailscale", "funnel", "--bg", "--yes", fmt.Sprintf("http://127.0.0.1:%d", hubPort)).CombinedOutput()
 			if err != nil {
 				return fmt.Errorf("tailscale funnel: %s", strings.TrimSpace(string(out)))
@@ -477,32 +511,36 @@ func configDir() string {
 }
 
 func configPath() string { return filepath.Join(configDir(), "config.json") }
-func pidPath() string    { return filepath.Join(configDir(), "daemon.pid") }
-func logPath() string    { return filepath.Join(configDir(), "daemon.log") }
+
+// Runtime files are per machine for the same reason as host labels: a pid
+// from another machine sharing configDir() means nothing here.
+func machineFile(prefix, ext string) string {
+	return filepath.Join(configDir(), prefix+"-"+machineName()+ext)
+}
+
+func pidPath() string       { return machineFile("daemon", ".pid") }
+func logPath() string       { return machineFile("daemon", ".log") }
+func legacyPIDPath() string { return filepath.Join(configDir(), "daemon.pid") }
 
 func loadConfig() (config, error) {
 	cfg := config{URL: strings.TrimRight(os.Getenv("PORTAL_URL"), "/"), Token: os.Getenv("PORTAL_TOKEN"), Host: os.Getenv("PORTAL_HOST")}
-	data, err := os.ReadFile(configPath())
+	fc, err := readFileConfig()
 	if err == nil {
-		var fileCfg config
-		if err := json.Unmarshal(data, &fileCfg); err != nil {
-			return cfg, fmt.Errorf("read config: %w", err)
-		}
 		if cfg.URL == "" {
-			cfg.URL = fileCfg.URL
+			cfg.URL = fc.URL
 		}
 		if cfg.Token == "" {
-			cfg.Token = fileCfg.Token
+			cfg.Token = fc.Token
 		}
 		if cfg.Host == "" {
-			cfg.Host = fileCfg.Host
+			cfg.Host = firstNonEmpty(fc.Hosts[machineName()], fc.Host)
 		}
-		cfg.AuthVersion = fileCfg.AuthVersion
+		cfg.AuthVersion = fc.AuthVersion
 	} else if !os.IsNotExist(err) {
 		return cfg, err
 	}
 	if cfg.Host == "" {
-		cfg.Host, _ = os.Hostname()
+		cfg.Host = machineName()
 	}
 	if cfg.URL == "" || cfg.Token == "" {
 		return cfg, errNotLinked
@@ -514,7 +552,21 @@ func saveConfig(cfg config) error {
 	if err := os.MkdirAll(configDir(), 0700); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	fc, err := readFileConfig()
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	fc.URL, fc.Token, fc.AuthVersion = cfg.URL, cfg.Token, cfg.AuthVersion
+	if fc.Hosts == nil {
+		fc.Hosts = map[string]string{}
+	}
+	fc.Hosts[machineName()] = cfg.Host
+	// The legacy label has no known owner; it stays the fallback for other
+	// machines until one claims it explicitly.
+	if fc.Host == cfg.Host {
+		fc.Host = ""
+	}
+	data, err := json.MarshalIndent(fc, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -528,28 +580,24 @@ func writePID() error {
 	return os.WriteFile(pidPath(), []byte(strconv.Itoa(os.Getpid())+"\n"), 0600)
 }
 
-func daemonRunning() bool {
-	data, err := os.ReadFile(pidPath())
-	if err != nil {
-		return false
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil || pid <= 0 {
-		return false
-	}
-	return syscall.Kill(pid, 0) == nil
+func daemonPID() int {
+	return runningPID("daemon", pidPath(), legacyPIDPath())
 }
 
+func daemonRunning() bool { return daemonPID() != 0 }
+
 func restartDaemon() error {
-	if data, err := os.ReadFile(pidPath()); err == nil {
-		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && pid > 0 {
-			_ = syscall.Kill(pid, syscall.SIGTERM)
-			for range 20 {
-				if syscall.Kill(pid, 0) != nil {
-					break
-				}
-				time.Sleep(50 * time.Millisecond)
+	for range 2 {
+		pid := daemonPID()
+		if pid == 0 {
+			break
+		}
+		_ = syscall.Kill(pid, syscall.SIGTERM)
+		for range 20 {
+			if syscall.Kill(pid, 0) != nil {
+				break
 			}
+			time.Sleep(50 * time.Millisecond)
 		}
 	}
 	_ = os.Remove(pidPath())

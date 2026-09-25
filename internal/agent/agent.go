@@ -84,6 +84,7 @@ func runOnce(cfg Config) error {
 	}()
 	hello := snapshotMessage("hello")
 	hello.Host = cfg.Host
+	hello.Machine, _ = os.Hostname()
 	hello.Version = buildinfo.Current()
 	hello.Capabilities = []string{controlCapability}
 	if err := c.write(hello); err != nil {
@@ -123,6 +124,8 @@ func runOnce(cfg Config) error {
 			c.finishAction(m.ID, c.scheduleInput(m.Session, m.Text, m.DelaySeconds, m.Repeat, m.IntervalSeconds), true)
 		case "cancel_schedule":
 			c.finishAction(m.ID, c.cancelSchedule(m.ScheduleID), true)
+		case "host":
+			log.Printf("host label %s is used by another machine; this one is shown as %s (set its own with `portal host NAME`)", cfg.Host, m.Host)
 		case "status_color":
 			c.finishAction(m.ID, c.setStatusColor(m.Value), false)
 		}
@@ -627,20 +630,26 @@ type screenTracker struct {
 
 type screenState struct {
 	sum     [sha256.Size]byte
+	last    [sha256.Size]byte // the screen before sum
 	changed int64
 }
 
 // observe records a session's screen and returns when it last changed
 // (Unix seconds) and its state. tmuxActivity seeds the first observation.
+// Flipping back to the previous screen is not a change: TUIs that draw their
+// own blinking cursor alternate between two frames while idle.
 func (t *screenTracker) observe(name, screen string, tmuxActivity int64, now time.Time) (int64, string) {
 	sum := sha256.Sum256([]byte(screen))
 	t.mu.Lock()
 	prev, ok := t.seen[name]
 	switch {
 	case !ok:
-		prev = screenState{sum: sum, changed: tmuxActivity}
-	case prev.sum != sum:
-		prev = screenState{sum: sum, changed: now.Unix()}
+		prev = screenState{sum: sum, last: sum, changed: tmuxActivity}
+	case prev.sum == sum:
+	case prev.last == sum:
+		prev.sum, prev.last = sum, prev.sum
+	default:
+		prev = screenState{sum: sum, last: prev.sum, changed: now.Unix()}
 	}
 	t.seen[name] = prev
 	t.mu.Unlock()

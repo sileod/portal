@@ -19,14 +19,28 @@ secret() {
     stty echo < /dev/tty
     printf '\n' > /dev/tty
 }
+# pid_running FILE [ARG]: FILE names a live process here whose command line
+# contains ARG. Config dirs may be shared across machines (NFS homes), so a pid
+# can come from another machine and match an unrelated local process.
 pid_running() {
     [ -f "$1" ] || return 1
     pid="$(cat "$1" 2>/dev/null || true)"
-    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
+    [ -n "${2:-}" ] && [ -r "/proc/$pid/cmdline" ] || return 0
+    tr '\000' '\n' < "/proc/$pid/cmdline" | grep -qx "$2"
+}
+# pidfile ROLE: this machine's pid file for ROLE, or the pre-per-machine one
+# when that still names a running ROLE process.
+pidfile() {
+    path="$CONFIG_DIR/$1-$(uname -n).pid"
+    if ! pid_running "$path" "$1" && pid_running "$CONFIG_DIR/$1.pid" "$1"; then
+        path="$CONFIG_DIR/$1.pid"
+    fi
+    echo "$path"
 }
 stop_pidfile() {
-    path="$1"
-    if pid_running "$path"; then
+    path="$(pidfile "$1")"
+    if pid_running "$path" "$1"; then
         pid="$(cat "$path")"
         kill "$pid" 2>/dev/null || true
         i=0
@@ -72,7 +86,7 @@ ASSET="portal_${OS}_${ARCH}.tar.gz"
 EXISTING=0
 [ -f "$CONFIG_DIR/config.json" ] && EXISTING=1
 HUB_WAS_RUNNING=0
-pid_running "$CONFIG_DIR/hub.pid" && HUB_WAS_RUNNING=1
+pid_running "$(pidfile hub)" hub && HUB_WAS_RUNNING=1
 
 install_asset() {
     tag="$1"
@@ -182,14 +196,14 @@ choose_new_password() {
 
 restart_existing() {
     say "Existing Portal detected; updating without touching tmux sessions."
-    stop_pidfile "$CONFIG_DIR/daemon.pid"
+    stop_pidfile daemon
 
     auth_v2=0
     grep -Eq '"auth_version"[[:space:]]*:[[:space:]]*2' "$CONFIG_DIR/config.json" 2>/dev/null && auth_v2=1
 
     if [ "$HUB_WAS_RUNNING" -eq 1 ]; then
         if [ ! -f "$CONFIG_DIR/hub-auth.json" ]; then
-            hub_pid="$(cat "$CONFIG_DIR/hub.pid" 2>/dev/null || true)"
+            hub_pid="$(cat "$(pidfile hub)" 2>/dev/null || true)"
             password=""
             if [ "$OS" = linux ] && [ -n "$hub_pid" ] && [ -r "/proc/$hub_pid/environ" ]; then
                 password="$(tr '\000' '\n' < "/proc/$hub_pid/environ" | sed -n 's/^PORTAL_PASSWORD=//p' | head -n1)"
@@ -204,10 +218,10 @@ restart_existing() {
             auth_v2=1
         fi
 
-        stop_pidfile "$CONFIG_DIR/hub.pid"
+        stop_pidfile hub
         mkdir -p "$CONFIG_DIR"
-        PORTAL_ADDR="127.0.0.1:8080" nohup "$BIN" hub >> "$CONFIG_DIR/hub.log" 2>&1 </dev/null &
-        echo $! > "$CONFIG_DIR/hub.pid"
+        PORTAL_ADDR="127.0.0.1:8080" nohup "$BIN" hub >> "$CONFIG_DIR/hub-$(uname -n).log" 2>&1 </dev/null &
+        echo $! > "$CONFIG_DIR/hub-$(uname -n).pid"
     elif [ "$auth_v2" -ne 1 ]; then
         url="$(config_value url)"
         host_name="$(config_value host)"
