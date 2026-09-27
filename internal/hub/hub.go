@@ -995,6 +995,9 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 		case "gpus":
 			s.mu.Lock()
 			if s.agents[a.host] == a {
+				if len(a.gpus) == 0 && len(m.GPUs) > 0 {
+					log.Printf("GPU telemetry available: %s (%d GPU(s))", a.host, len(m.GPUs))
+				}
 				a.gpus = append([]protocol.GPU(nil), m.GPUs...)
 			}
 			s.mu.Unlock()
