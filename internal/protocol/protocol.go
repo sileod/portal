@@ -23,6 +23,7 @@ type Message struct {
 	Sessions        []string   `json:"sessions,omitempty"`
 	SessionInfos    []Session  `json:"session_infos,omitempty"`
 	Schedules       []Schedule `json:"schedules,omitempty"`
+	GPUs            []GPU      `json:"gpus,omitempty"`
 	Capabilities    []string   `json:"capabilities,omitempty"`
 	Version         string     `json:"version,omitempty"`
 	Data            string     `json:"data,omitempty"`
@@ -63,11 +64,20 @@ type Schedule struct {
 	Cancelable      bool   `json:"cancelable,omitempty"`
 }
 
+type GPU struct {
+	Index       int    `json:"index"`
+	Name        string `json:"name"`
+	Utilization int    `json:"utilization"`
+	MemoryUsed  int    `json:"memory_used"`  // MiB
+	MemoryTotal int    `json:"memory_total"` // MiB
+}
+
 type SessionList struct {
 	Version      string            `json:"version"`
 	HostCount    int               `json:"host_count"`
 	Hosts        []string          `json:"hosts"`
 	HostVersions map[string]string `json:"host_versions,omitempty"`
+	HostGPUs     map[string][]GPU  `json:"host_gpus,omitempty"`
 	Sessions     []Session         `json:"sessions"`
 	Schedules    []Schedule        `json:"schedules,omitempty"`
 }

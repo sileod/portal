@@ -23,6 +23,8 @@ On another machine, run the same installer and choose **Join an existing Portal*
 
 Each machine is labelled from its hostname (`rack-rack12.lab.org` shows as `rack12`); change it with `portal host NAME`. Machines that share a home directory, e.g. over NFS, are already joined through the shared config and keep their own labels.
 
+The Portal settings page shows GPU utilization and memory for connected NVIDIA hosts with `nvidia-smi` installed. Each host samples at most once every 30 seconds, even when connected to multiple hubs. Hosts without available NVIDIA telemetry show no GPU row.
+
 ## Use
 
 ```bash

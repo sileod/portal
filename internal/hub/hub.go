@@ -43,6 +43,7 @@ type agentConn struct {
 	sessions     []string
 	sessionInfos []protocol.Session
 	schedules    []protocol.Schedule
+	gpus         []protocol.GPU
 	capabilities []string
 	version      string
 }
@@ -590,9 +591,13 @@ func (s *Server) handleSessions(w http.ResponseWriter, _ *http.Request) {
 	schedules := make([]protocol.Schedule, 0)
 	hosts := make([]string, 0, len(s.agents))
 	hostVersions := make(map[string]string, len(s.agents))
+	hostGPUs := make(map[string][]protocol.GPU, len(s.agents))
 	for host, a := range s.agents {
 		hosts = append(hosts, host)
 		hostVersions[host] = a.version
+		if len(a.gpus) > 0 {
+			hostGPUs[host] = append([]protocol.GPU(nil), a.gpus...)
+		}
 		if len(a.sessionInfos) > 0 {
 			for _, session := range a.sessionInfos {
 				session.Host = host
@@ -631,6 +636,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, _ *http.Request) {
 		HostCount:    hostCount,
 		Hosts:        hosts,
 		HostVersions: hostVersions,
+		HostGPUs:     hostGPUs,
 		Sessions:     list,
 		Schedules:    schedules,
 	})
@@ -986,6 +992,12 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 			if current {
 				s.notify.observe(a.host, m.SessionInfos)
 			}
+		case "gpus":
+			s.mu.Lock()
+			if s.agents[a.host] == a {
+				a.gpus = append([]protocol.GPU(nil), m.GPUs...)
+			}
+			s.mu.Unlock()
 		case "action_result":
 			s.resolveAction(m)
 		case "output":
