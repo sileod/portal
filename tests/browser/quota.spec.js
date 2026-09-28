@@ -17,6 +17,7 @@ test('harness quotas appear in the left box and host settings only when availabl
       ] },
       opencode: { ok: false, error: 'no OpenCode login found' },
     },
+    remote: { codex: { ok: false, error: 'not configured' } },
   };
   await page.addInitScript(() => { localStorage.portalOrientation = 'vertical'; });
   await page.route('/api/sessions', route => route.fulfill({
@@ -36,13 +37,15 @@ test('harness quotas appear in the left box and host settings only when availabl
   await expect(page.locator('#quotaSidebar')).toContainText('Antigravity Claude and GPT models / weekly');
   await expect(page.locator('#quotaSidebar')).toContainText('Antigravity Claude and GPT models / 5h');
   await expect(page.locator('#quotaSidebar')).not.toContainText('remote');
+  await expect(page.locator('#quotaSidebar')).not.toContainText('unavailable');
+  const rows = page.locator('#quotaSidebar .quotasidebarrow');
+  await expect(rows.first()).toContainText('portal · Codex 5h');
   expect(await page.locator('#quotaSidebar').evaluate(el => el.nextElementSibling.id)).toBe('portalNav');
 
   await page.locator('#portalNav').click();
   await expect(page.locator('#sessionOverview')).toContainText('Codex · 7d');
-  await expect(page.locator('#sessionOverview')).toContainText('OpenCode');
-  await expect(page.locator('#sessionOverview .quotarow', { hasText: 'OpenCode' }))
-    .toHaveAttribute('title', 'no OpenCode login found');
+  await expect(page.locator('#sessionOverview')).not.toContainText('OpenCode');
+  await expect(page.locator('#sessionOverview .quotarow', { hasText: 'unavailable' })).toHaveCount(0);
 
   await page.locator('#setQuotaVisibility').selectOption('hide');
   await expect(page.locator('#quotaSidebar')).toBeEmpty();
