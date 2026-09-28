@@ -23,7 +23,7 @@ On another machine, run the same installer and choose **Join an existing Portal*
 
 Each machine is labelled from its hostname (`rack-rack12.lab.org` shows as `rack12`); change it with `portal host NAME`. Machines that share a home directory, e.g. over NFS, are already joined through the shared config and keep their own labels.
 
-The vertical tab bar shows GPU utilization for connected NVIDIA hosts with `nvidia-smi` installed. The Portal settings page also shows utilization and memory for each host, or "GPU usage unavailable" when no data has arrived. Each host samples at most once every 30 seconds, even when connected to multiple hubs.
+The vertical tab bar shows available GPU memory for connected NVIDIA hosts with `nvidia-smi` installed. The Portal settings page shows available and total memory alongside utilization for each host, or "GPU memory unavailable" when no data has arrived. Each host samples at most once every 30 seconds, even when connected to multiple hubs.
 
 ## Use
 
@@ -93,8 +93,7 @@ Portal stays intentionally small and terminal-first.
 - colored tab dots: orange when a terminal shows a prompt waiting for you (agent approvals, `[y/N]`, …; the page title counts them), green while its screen is changing, blue for new output since you last looked
 - last activity time based on real screen changes, so idle TUIs that redraw do not look busy
 - phone notifications through [ntfy](https://ntfy.sh): set a topic in the Portal page and pick events (a terminal needs input, finished a run of at least N seconds, stayed idle N minutes after one, or a machine dropped/returned); the hub sends them itself, so no browser has to stay open, and each one links back to its terminal
-- tab ordering by name, newest first, last used, recent output, or a manual order you set by dragging tabs; the ⇅ button cycles through them, plus a one-click mark-all-read control
-- sort tabs by name or recent activity
+- tab ordering by recent output (the default), newest first, last used, name, or a manual order you set by dragging tabs; the ⇅ button cycles through them, plus a one-click mark-all-read control
 - schedule arbitrary text + Enter for later
 - repeat a scheduled send at an interval
 - see pending schedules on the session and in the Portal tab

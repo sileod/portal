@@ -24,9 +24,17 @@ test('dragging a tab switches to a persistent manual order', async ({ page }) =>
   await mockSessions(page, ['alpha', 'beta', 'gamma']);
   await page.goto('/');
   await expect.poll(() => tabNames(page)).toEqual(['alpha', 'beta', 'gamma']);
-  const gamma = page.locator('.tabwrap', { hasText: 'gamma' });
-  const alpha = page.locator('.tabwrap', { hasText: 'alpha' });
-  await gamma.dragTo(alpha, { targetPosition: { x: 5, y: 5 } });
+  await page.evaluate(() => {
+    const wraps = [...document.querySelectorAll('.tabwrap')];
+    const gamma = wraps.find(w => w.textContent.includes('gamma'));
+    const alpha = wraps.find(w => w.textContent.includes('alpha'));
+    const dataTransfer = new DataTransfer();
+    const clientY = alpha.getBoundingClientRect().top + 5;
+    gamma.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer }));
+    alpha.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer, clientY }));
+    alpha.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer, clientY }));
+    gamma.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer }));
+  });
   await expect.poll(() => tabNames(page)).toEqual(['gamma', 'alpha', 'beta']);
   expect(await page.evaluate(() => localStorage.portalTabOrder)).toBe('manual');
   await page.reload();
@@ -35,6 +43,7 @@ test('dragging a tab switches to a persistent manual order', async ({ page }) =>
 
 test('each tab has a close button that kills its session', async ({ page }) => {
   const killed = await mockSessions(page, ['alpha', 'beta']);
+  await page.addInitScript(() => { localStorage.portalTabOrder = 'name'; });
   await page.goto('/');
   await expect.poll(() => tabNames(page)).toEqual(['alpha', 'beta']);
   page.on('dialog', d => d.accept());
@@ -54,6 +63,7 @@ test('tab dots show which terminals need input, are working, or have news', asyn
     { session: 'busy', state: 'working', last_activity: now },
     { session: 'done', last_activity: doneActivity },
   ]);
+  await page.addInitScript(() => { localStorage.portalTabOrder = 'name'; });
   await page.goto('/');
   await expect.poll(() => tabNames(page)).toEqual(['alpha', 'asking', 'busy', 'done']);
   doneActivity = now;
@@ -65,14 +75,28 @@ test('tab dots show which terminals need input, are working, or have news', asyn
   await expect(page).toHaveTitle('(1) Portal');
 });
 
-test('the sort button cycles tab orders, starting with newest first', async ({ page }) => {
+test('recent output is the default, with creation time breaking ties', async ({ page }) => {
   await mockSessions(page, [
-    { session: 'alpha', created: 100 },
-    { session: 'beta', created: 300 },
-    { session: 'gamma', created: 200 },
+    { session: 'older', created: 100, last_activity: 1000 },
+    { session: 'newer', created: 300, last_activity: 1000 },
+    { session: 'active', created: 200, last_activity: 2000 },
   ]);
   await page.goto('/');
-  await expect.poll(() => tabNames(page)).toEqual(['alpha', 'beta', 'gamma']);
+  await expect.poll(() => tabNames(page)).toEqual(['active', 'newer', 'older']);
+  await expect(page.locator('#setTabOrder')).toHaveValue('recent');
+  await expect(page.locator('#setTabOrder option')).toHaveText([
+    'recent output', 'newest first', 'last used', 'name', 'manual (drag tabs)',
+  ]);
+});
+
+test('the sort button cycles from recent output to newest first', async ({ page }) => {
+  await mockSessions(page, [
+    { session: 'alpha', created: 100, last_activity: 500 },
+    { session: 'beta', created: 300, last_activity: 100 },
+    { session: 'gamma', created: 200, last_activity: 200 },
+  ]);
+  await page.goto('/');
+  await expect.poll(() => tabNames(page)).toEqual(['alpha', 'gamma', 'beta']);
   await page.locator('#sortTabs').click();
   await expect.poll(() => tabNames(page)).toEqual(['beta', 'gamma', 'alpha']);
   await expect(page.locator('#sortTabs')).toHaveAttribute('title', /newest first/);
@@ -80,7 +104,7 @@ test('the sort button cycles tab orders, starting with newest first', async ({ p
   await page.reload();
   await expect.poll(() => tabNames(page)).toEqual(['beta', 'gamma', 'alpha']);
   await page.locator('#sortTabs').click();
-  await expect(page.locator('#sortTabs')).toHaveAttribute('title', /recent output/);
+  await expect(page.locator('#sortTabs')).toHaveAttribute('title', /last used/);
 });
 
 test('newest first falls back to when this browser first saw a terminal', async ({ page }) => {
