@@ -237,6 +237,10 @@ func (c *connection) open(id, session string) {
 	}
 	c.close(id)
 	cmd := exec.Command("tmux", "attach-session", "-t", SessionTarget(session))
+	// The daemon may be started without a terminal (for example by the
+	// installer), so give tmux a terminal type for this browser PTY. A daemon
+	// launched from inside tmux must not pass its own client context through.
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "TMUX=")
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 120, Rows: 32})
 	if err != nil {
 		c.write(protocol.Message{Type: "error", ID: id, Error: err.Error()})
