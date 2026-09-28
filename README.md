@@ -25,7 +25,7 @@ Each machine is labelled from its hostname (`rack-rack12.lab.org` shows as `rack
 
 The vertical tab bar shows available GPU memory for connected NVIDIA hosts with `nvidia-smi` installed. The Portal settings page shows available and total memory alongside utilization for each host, or "GPU memory unavailable" when no data has arrived. Each host samples at most once every 30 seconds, even when connected to multiple hubs.
 
-When [Harness Link](https://github.com/sileod/harness-link) is installed on a host, Portal shows its `hlink quota --json` results in a box in the left tab bar and in that host's settings card. Remaining quota windows refresh about every five minutes. Portal forwards quota summaries and availability errors to the hub, never harness credentials. Set `PORTAL_HLINK` on the host daemon if its `hlink` executable is outside the daemon's PATH.
+When [Harness Link](https://github.com/sileod/harness-link) is installed on a host, Portal shows its `hlink quota --json` results, including available 5-hour and weekly windows, in a box at the bottom of the left tab bar and in that host's settings card. The Appearance settings can hide the sidebar quota box in this browser. Remaining quota windows refresh about every five minutes. Portal forwards quota summaries and availability errors to the hub, never harness credentials. Set `PORTAL_HLINK` on the host daemon if its `hlink` executable is outside the daemon's PATH.
 
 ## Use
 

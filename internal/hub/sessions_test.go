@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -10,7 +11,32 @@ import (
 	"testing"
 
 	"github.com/sileod/portal/internal/auth"
+	"github.com/sileod/portal/internal/protocol"
 )
+
+func TestSessionListIncludesHarnessQuotaWindows(t *testing.T) {
+	s := New("hash", "token")
+	s.agents["portal"] = &agentConn{quotas: map[string]protocol.QuotaResult{
+		"codex": {OK: true, Windows: []protocol.QuotaWindow{
+			{Name: "5h", Remaining: 16},
+			{Name: "7d", Remaining: 65},
+		}},
+		"opencode": {Error: "no login"},
+	}}
+	w := httptest.NewRecorder()
+	s.handleSessions(w, httptest.NewRequest(http.MethodGet, "/api/sessions", nil))
+	var list protocol.SessionList
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	windows := list.HostQuotas["portal"]["codex"].Windows
+	if len(windows) != 2 || windows[0].Name != "5h" || windows[1].Name != "7d" || windows[1].Remaining != 65 {
+		t.Fatalf("Codex quota windows were lost from session list: %+v", windows)
+	}
+	if list.HostQuotas["portal"]["opencode"].Error != "no login" {
+		t.Fatalf("provider availability was lost from session list: %+v", list.HostQuotas["portal"])
+	}
+}
 
 func login(t *testing.T, s *Server, password string) *http.Cookie {
 	t.Helper()
