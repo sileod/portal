@@ -44,6 +44,7 @@ type agentConn struct {
 	sessionInfos []protocol.Session
 	schedules    []protocol.Schedule
 	gpus         []protocol.GPU
+	quotas       map[string]protocol.QuotaResult
 	capabilities []string
 	version      string
 }
@@ -592,11 +593,15 @@ func (s *Server) handleSessions(w http.ResponseWriter, _ *http.Request) {
 	hosts := make([]string, 0, len(s.agents))
 	hostVersions := make(map[string]string, len(s.agents))
 	hostGPUs := make(map[string][]protocol.GPU, len(s.agents))
+	hostQuotas := make(map[string]map[string]protocol.QuotaResult, len(s.agents))
 	for host, a := range s.agents {
 		hosts = append(hosts, host)
 		hostVersions[host] = a.version
 		if len(a.gpus) > 0 {
 			hostGPUs[host] = append([]protocol.GPU(nil), a.gpus...)
+		}
+		if len(a.quotas) > 0 {
+			hostQuotas[host] = a.quotas
 		}
 		if len(a.sessionInfos) > 0 {
 			for _, session := range a.sessionInfos {
@@ -637,6 +642,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, _ *http.Request) {
 		Hosts:        hosts,
 		HostVersions: hostVersions,
 		HostGPUs:     hostGPUs,
+		HostQuotas:   hostQuotas,
 		Sessions:     list,
 		Schedules:    schedules,
 	})
@@ -999,6 +1005,15 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 					log.Printf("GPU telemetry available: %s (%d GPU(s))", a.host, len(m.GPUs))
 				}
 				a.gpus = append([]protocol.GPU(nil), m.GPUs...)
+			}
+			s.mu.Unlock()
+		case "quotas":
+			s.mu.Lock()
+			if s.agents[a.host] == a {
+				if len(a.quotas) == 0 && len(m.Quotas) > 0 {
+					log.Printf("Harness quota telemetry available: %s (%d provider(s))", a.host, len(m.Quotas))
+				}
+				a.quotas = m.Quotas
 			}
 			s.mu.Unlock()
 		case "action_result":

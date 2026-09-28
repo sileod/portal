@@ -95,6 +95,7 @@ func runOnce(cfg Config) error {
 	defer close(done)
 	go c.publishSessions(done)
 	go c.publishGPUs(done)
+	go c.publishQuotas(done)
 	go c.pingLoop(done)
 	_ = ws.SetReadDeadline(time.Now().Add(protocol.PongWait))
 	ws.SetPongHandler(func(string) error {

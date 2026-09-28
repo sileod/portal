@@ -25,6 +25,8 @@ Each machine is labelled from its hostname (`rack-rack12.lab.org` shows as `rack
 
 The vertical tab bar shows available GPU memory for connected NVIDIA hosts with `nvidia-smi` installed. The Portal settings page shows available and total memory alongside utilization for each host, or "GPU memory unavailable" when no data has arrived. Each host samples at most once every 30 seconds, even when connected to multiple hubs.
 
+When [Harness Link](https://github.com/sileod/harness-link) is installed on a host, Portal shows its `hlink quota --json` results in a box in the left tab bar and in that host's settings card. Remaining quota windows refresh about every five minutes. Portal forwards quota summaries and availability errors to the hub, never harness credentials. Set `PORTAL_HLINK` on the host daemon if its `hlink` executable is outside the daemon's PATH.
+
 ## Use
 
 ```bash
@@ -88,7 +90,7 @@ Portal stays intentionally small and terminal-first.
 - create, rename, and kill sessions (× on each tab, or middle-click it)
 - left-button drag selects terminal text even in mouse-aware apps, with or without Alt/Shift
 - selecting terminal text copies it automatically when the browser allows clipboard writes; the explicit copy button and Ctrl/Cmd+C remain available, while Ctrl-C still interrupts when there is no selection
-- explicit paste button, plus normal Windows/Linux Ctrl+V and macOS Cmd+V handling
+- normal Windows/Linux Ctrl+V and macOS Cmd+V paste handling
 - streamed output keeps the viewport pinned while you are reviewing older scrollback
 - colored tab dots: orange when a terminal shows a prompt waiting for you (agent approvals, `[y/N]`, …; the page title counts them), green while its screen is changing, blue for new output since you last looked
 - last activity time based on real screen changes, so idle TUIs that redraw do not look busy

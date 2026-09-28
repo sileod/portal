@@ -5,8 +5,7 @@ import "bytes"
 func init() {
 	const toolNeedle = `      <button class="tool" id="newtab" title="New terminal">+</button>`
 	const tools = `      <button class="tool" id="newtab" title="New terminal">+</button>
-      <button class="tool" id="copy" title="Copy selected terminal text">⧉</button>
-      <button class="tool" id="paste" title="Paste clipboard into active terminal">⎘</button>`
+      <button class="tool" id="copy" title="Copy selected terminal text">⧉</button>`
 	IndexHTML = bytes.Replace(IndexHTML, []byte(toolNeedle), []byte(tools), 1)
 
 	const bodyNeedle = `</body>`
@@ -89,7 +88,7 @@ document.addEventListener('keydown',e=>{
   }else if(portalIsMac()&&e.ctrlKey&&!e.metaKey&&key==='v'){
     e.preventDefault();e.stopImmediatePropagation();
     readPortalClipboard().then(pasteIntoActiveTerminal).catch(()=>{
-      showStatus('Clipboard read was blocked. Use Cmd+V or the Paste button.',true);x.term.focus();
+      promptPortalPaste();
     });
   }
 },true);
@@ -157,17 +156,8 @@ openTerm=function(s){
   return ensurePortalTerminalControls(openPortalTerminal(s));
 };
 for(const x of terms.values())ensurePortalTerminalControls(x);
-const pastePortalButton=document.querySelector('#paste');
 const copyPortalButton=document.querySelector('#copy');
 if(copyPortalButton)copyPortalButton.onclick=copyActiveTerminalSelection;
-if(pastePortalButton)pastePortalButton.onclick=async()=>{
-  if(!activePortalTerminal())return;
-  try{
-    const text=await readPortalClipboard();pasteIntoActiveTerminal(text);
-  }catch{
-    promptPortalPaste();
-  }
-};
 </script></body>`
 	IndexHTML = bytes.Replace(IndexHTML, []byte(bodyNeedle), []byte(script), 1)
 }

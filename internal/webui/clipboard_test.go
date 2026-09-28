@@ -8,7 +8,6 @@ import (
 func TestClipboardControlsInjected(t *testing.T) {
 	for _, needle := range [][]byte{
 		[]byte(`id="copy"`),
-		[]byte(`id="paste"`),
 		[]byte(`addEventListener('copy'`),
 		[]byte(`addEventListener('paste'`),
 		[]byte(`x.term.hasSelection()`),
@@ -26,6 +25,9 @@ func TestClipboardControlsInjected(t *testing.T) {
 		if !bytes.Contains(IndexHTML, needle) {
 			t.Fatalf("IndexHTML missing %q", needle)
 		}
+	}
+	if bytes.Contains(IndexHTML, []byte(`id="paste"`)) {
+		t.Fatal("the terminal toolbar must not show a paste button")
 	}
 	if bytes.Contains(IndexHTML, []byte(`x.el.addEventListener('mouseup'`)) || bytes.Contains(IndexHTML, []byte(`writePortalClipboard(text).then(ok=>`)) {
 		t.Fatal("selecting terminal text must not use the selection-destroying fallback copy path")

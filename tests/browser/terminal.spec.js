@@ -163,7 +163,8 @@ test('terminal fits its viewport and copies selections', async ({ page, browserN
 
   if (browserName === 'chromium') {
     await page.evaluate(() => navigator.clipboard.writeText('Portal synthetic paste payload'));
-    await page.locator('#paste').click();
+    await page.locator('.xterm-screen').click();
+    await page.keyboard.press('Control+v');
   } else {
     await page.evaluate(() => {
       const event = new Event('paste', { bubbles: true, cancelable: true });
