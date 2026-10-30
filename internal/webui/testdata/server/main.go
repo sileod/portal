@@ -45,10 +45,15 @@ func main() {
 	mux.HandleFunc("/api/sessions", func(w http.ResponseWriter, r *http.Request) {
 		schedules := []map[string]any{}
 		if cookie, err := r.Cookie("portal_browser_schedule"); err == nil && cookie.Value == "1" {
+			skipNext := false
+			if skipCookie, err := r.Cookie("portal_browser_schedule_skip"); err == nil && skipCookie.Value == "1" {
+				skipNext = true
+			}
 			schedules = append(schedules, map[string]any{
 				"id": "deadbeef", "host": "test-host", "session": "test-session",
 				"text": "synthetic planned message", "created_at": time.Now().Unix(),
-				"first_at": time.Now().Add(time.Hour).Unix(), "repeat": 1, "cancelable": true,
+				"first_at": time.Now().Add(time.Hour).Unix(), "repeat": 3, "interval_seconds": 3600,
+				"cancelable": true, "skippable": true, "skip_next": skipNext,
 			})
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -78,11 +83,16 @@ func main() {
 			ScheduleID string `json:"schedule_id"`
 		}
 		if r.Method != http.MethodPost || json.NewDecoder(r.Body).Decode(&action) != nil ||
-			action.Action != "cancel_schedule" || action.Host != "test-host" || action.ScheduleID != "deadbeef" {
+			action.Host != "test-host" || action.ScheduleID != "deadbeef" ||
+			(action.Action != "cancel_schedule" && action.Action != "skip_schedule") {
 			http.Error(w, "bad synthetic action", http.StatusBadRequest)
 			return
 		}
-		http.SetCookie(w, &http.Cookie{Name: "portal_browser_schedule", Value: "0", Path: "/", SameSite: http.SameSiteStrictMode})
+		if action.Action == "cancel_schedule" {
+			http.SetCookie(w, &http.Cookie{Name: "portal_browser_schedule", Value: "0", Path: "/", SameSite: http.SameSiteStrictMode})
+		} else {
+			http.SetCookie(w, &http.Cookie{Name: "portal_browser_schedule_skip", Value: "1", Path: "/", SameSite: http.SameSiteStrictMode})
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})

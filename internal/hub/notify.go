@@ -37,6 +37,9 @@ type NotifyConfig struct {
 	IdleMinutes    int  `json:"idle_minutes"`
 	// BaseURL is the Portal URL notifications link back to.
 	BaseURL string `json:"base_url,omitempty"`
+	// Jev classifies anonymized terminal output. While enabled, automatic ntfy
+	// notifications are deliberately limited to the "input" decision.
+	Jev bool `json:"jev"`
 }
 
 const defaultNtfyServer = "https://ntfy.sh"
@@ -45,6 +48,15 @@ var topicPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 func defaultNotifyConfig() NotifyConfig {
 	return NotifyConfig{Server: defaultNtfyServer, Waiting: true, Finished: true, MinWorkSeconds: 30, IdleMinutes: 10}
+}
+
+func envEnabled(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *NotifyConfig) normalize() error {
@@ -160,6 +172,12 @@ func (n *notifier) load(path string) error {
 	n.path = path
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
+		if envEnabled("PORTAL_JEV") {
+			n.config.Jev = true
+			if data, marshalErr := json.MarshalIndent(n.config, "", "  "); marshalErr == nil {
+				_ = os.WriteFile(path, data, 0600)
+			}
+		}
 		return nil
 	}
 	if err != nil {
@@ -170,8 +188,23 @@ func (n *notifier) load(path string) error {
 		log.Printf("ignoring unreadable notification settings %s", path)
 		return nil
 	}
+	if envEnabled("PORTAL_JEV") {
+		config.Jev = true
+		if data, err := json.MarshalIndent(config, "", "  "); err == nil {
+			tmp := filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+".tmp")
+			if err := os.WriteFile(tmp, data, 0600); err == nil {
+				_ = os.Rename(tmp, path)
+			}
+		}
+	}
 	n.config = config
 	return nil
+}
+
+func (n *notifier) jevEnabled() bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.config.Jev
 }
 
 func (n *notifier) setConfig(c NotifyConfig) error {
@@ -195,8 +228,11 @@ func (n *notifier) setConfig(c NotifyConfig) error {
 
 type notifyStatus struct {
 	NotifyConfig
-	LastSent  int64  `json:"last_sent,omitempty"`
-	LastError string `json:"last_error,omitempty"`
+	LastSent     int64  `json:"last_sent,omitempty"`
+	LastError    string `json:"last_error,omitempty"`
+	JevAvailable bool   `json:"jev_available"`
+	JevModel     string `json:"jev_model,omitempty"`
+	JevError     string `json:"jev_error,omitempty"`
 }
 
 func (n *notifier) status() notifyStatus {
@@ -221,33 +257,46 @@ func (n *notifier) observe(host string, sessions []protocol.Session) {
 	next := make(map[string]*sessionWatch, len(sessions))
 	var out []notification
 	for _, s := range sessions {
+		state := s.State
+		if c.Jev {
+			switch s.JevState {
+			case "inflight":
+				state = "working"
+			case "done":
+				state = ""
+			case "input":
+				state = "waiting"
+			default:
+				state = ""
+			}
+		}
 		w, ok := prev[s.Session]
 		if !ok {
-			w = &sessionWatch{state: s.State}
-			if s.State == "working" {
+			w = &sessionWatch{state: state}
+			if state == "working" {
 				w.workingSince = now
 			}
 			next[s.Session] = w
 			continue
 		}
 		next[s.Session] = w
-		if s.State == w.state {
+		if state == w.state {
 			continue
 		}
-		if s.State == "working" {
+		if state == "working" {
 			w.workingSince = now
 			w.ranAt = time.Time{}
 		}
-		if w.state == "working" && s.State != "working" && now.Sub(w.workingSince) >= minWork {
+		if !c.Jev && w.state == "working" && state != "working" && now.Sub(w.workingSince) >= minWork {
 			w.ranAt = now
-			if s.State == "" && c.Finished {
+			if state == "" && c.Finished {
 				out = append(out, notification{Title: s.Session + " finished", Message: fmt.Sprintf("%s:%s stopped after %s of activity", host, s.Session, roundDuration(now.Sub(w.workingSince))), Tags: "white_check_mark", Host: host, Session: s.Session})
 			}
 		}
-		if s.State == "waiting" && c.Waiting {
+		if state == "waiting" && c.Waiting {
 			out = append(out, notification{Title: s.Session + " needs input", Message: host + ":" + s.Session + " is waiting for you", Tags: "question", Host: host, Session: s.Session})
 		}
-		w.state = s.State
+		w.state = state
 	}
 	n.watches[host] = next
 	n.dispatchLocked(out)
@@ -257,6 +306,9 @@ func (n *notifier) observe(host string, sessions []protocol.Session) {
 func (n *notifier) tick() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	if n.config.Jev {
+		return
+	}
 	now := n.now()
 	idle := time.Duration(n.config.IdleMinutes) * time.Minute
 	var out []notification
@@ -283,7 +335,7 @@ func (n *notifier) hostEvent(host string, connected bool) {
 	} else {
 		n.lost[host] = true
 	}
-	if !n.config.Hosts {
+	if n.config.Jev || !n.config.Hosts {
 		return
 	}
 	if connected {
@@ -369,6 +421,17 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if req.Jev {
+			s.mu.RLock()
+			agents := make([]*agentConn, 0, len(s.agents))
+			for _, a := range s.agents {
+				agents = append(agents, a)
+			}
+			s.mu.RUnlock()
+			for _, a := range agents {
+				s.observeJev(a)
+			}
+		}
 		if req.Test {
 			if err := s.notify.test(); err != nil {
 				http.Error(w, "test notification failed: "+err.Error(), http.StatusBadGateway)
@@ -380,5 +443,10 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(s.notify.status())
+	status := s.notify.status()
+	if s.jev != nil {
+		status.JevAvailable = s.jev.available()
+		status.JevModel, status.JevError = s.jev.status()
+	}
+	_ = json.NewEncoder(w).Encode(status)
 }

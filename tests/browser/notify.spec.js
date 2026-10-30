@@ -27,6 +27,23 @@ test('notification settings load from and save to the hub', async ({ page }) => 
   await expect(page.locator('#notifyStatus')).toContainText('Last sent');
 });
 
+test('Jev setting explains and disables non-input automatic events', async ({ page }) => {
+  await page.route('/api/notify', route => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({
+      server: 'https://ntfy.sh', topic: 'portal-test', waiting: true, finished: true,
+      idle: true, hosts: true, min_work_seconds: 30, idle_minutes: 10,
+      jev: true, jev_available: true, jev_model: 'typesafe/jev-1.13-20260917',
+    }),
+  }));
+  await page.goto('/');
+  await page.locator('#portalNav').click();
+  await expect(page.locator('#notifyJev')).toBeChecked();
+  await expect(page.locator('#notifyFinished')).toBeDisabled();
+  await expect(page.locator('#notifyHosts')).toBeDisabled();
+  await expect(page.locator('#notifyStatus')).toContainText('Jev live');
+});
+
 test('sidebar tools stay fully visible in the narrowest vertical tab bar', async ({ page }) => {
   await page.addInitScript(() => { localStorage.portalSidebarWidth = '140' });
   await page.goto('/');

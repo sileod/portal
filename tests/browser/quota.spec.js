@@ -40,7 +40,7 @@ test('harness quotas appear in the left box and host settings only when availabl
   await expect(rows.nth(2)).toHaveText('portal · Antigravity– / 0%·3d');
   await expect(rows.nth(2)).toHaveAttribute('title', /Gemini Models \/ weekly: 0% left/);
   expect(await rows.nth(0).locator('span').last().evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
-  expect(await page.locator('#quotaSidebar').evaluate(el => el.nextElementSibling.id)).toBe('portalNav');
+  expect(await page.locator('#quotaSidebar').evaluate(el => el.nextElementSibling.id)).toBe('funnelNav');
 
   await page.locator('#portalNav').click();
   await expect(page.locator('#sessionOverview .quotarow', { hasText: 'Codex' })).toHaveText('Codex78%·2h / 75%·4d');

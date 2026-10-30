@@ -15,13 +15,17 @@ const (
 )
 
 type Message struct {
-	Type            string                 `json:"type"`
-	ID              string                 `json:"id,omitempty"`
-	Host            string                 `json:"host,omitempty"`
-	Machine         string                 `json:"machine,omitempty"`
-	Session         string                 `json:"session,omitempty"`
-	Sessions        []string               `json:"sessions,omitempty"`
-	SessionInfos    []Session              `json:"session_infos,omitempty"`
+	Funnels      []Funnel  `json:"funnels,omitempty"`
+	Type         string    `json:"type"`
+	ID           string    `json:"id,omitempty"`
+	Host         string    `json:"host,omitempty"`
+	Machine      string    `json:"machine,omitempty"`
+	Session      string    `json:"session,omitempty"`
+	Sessions     []string  `json:"sessions,omitempty"`
+	SessionInfos []Session `json:"session_infos,omitempty"`
+	// SessionOutputs contains anonymized recent terminal text keyed by session.
+	// It is sent only from hosts to the hub and is never exposed by SessionList.
+	SessionOutputs  map[string]string      `json:"session_outputs,omitempty"`
 	Schedules       []Schedule             `json:"schedules,omitempty"`
 	GPUs            []GPU                  `json:"gpus,omitempty"`
 	Quotas          map[string]QuotaResult `json:"quotas,omitempty"`
@@ -42,6 +46,8 @@ type Message struct {
 }
 
 type Session struct {
+	// CodexResetAt is a usage-limit retry time resolved in the host timezone.
+	CodexResetAt int64  `json:"codex_reset_at,omitempty"`
 	Host         string `json:"host"`
 	Session      string `json:"session"`
 	LastActivity int64  `json:"last_activity,omitempty"`
@@ -50,6 +56,11 @@ type Session struct {
 	// State is "waiting" when the screen shows a prompt for the user,
 	// "working" while the screen keeps changing, and empty when idle.
 	State string `json:"state,omitempty"`
+	// JevState is the decision-model view of the latest terminal output:
+	// "inflight", "done", or "input". The browser uses it in preference to
+	// State when present, while State remains the low-latency local fallback.
+	JevState      string  `json:"jev_state,omitempty"`
+	JevConfidence float64 `json:"jev_confidence,omitempty"`
 }
 
 type Schedule struct {
@@ -63,6 +74,8 @@ type Schedule struct {
 	Repeat          int    `json:"repeat"`
 	IntervalSeconds int64  `json:"interval_seconds,omitempty"`
 	Cancelable      bool   `json:"cancelable,omitempty"`
+	Skippable       bool   `json:"skippable,omitempty"`
+	SkipNext        bool   `json:"skip_next,omitempty"`
 }
 
 type GPU struct {
@@ -71,6 +84,10 @@ type GPU struct {
 	Utilization int    `json:"utilization"`
 	MemoryUsed  int    `json:"memory_used"`  // MiB
 	MemoryTotal int    `json:"memory_total"` // MiB
+}
+
+type Funnel struct {
+	URL string `json:"url"`
 }
 
 type QuotaWindow struct {
@@ -86,6 +103,7 @@ type QuotaResult struct {
 }
 
 type SessionList struct {
+	HostFunnels  map[string][]Funnel               `json:"host_funnels,omitempty"`
 	Version      string                            `json:"version"`
 	HostCount    int                               `json:"host_count"`
 	Hosts        []string                          `json:"hosts"`

@@ -96,6 +96,7 @@ func runOnce(cfg Config) error {
 	go c.publishSessions(done)
 	go c.publishGPUs(done)
 	go c.publishQuotas(done)
+	go c.publishFunnels(done)
 	go c.pingLoop(done)
 	_ = ws.SetReadDeadline(time.Now().Add(protocol.PongWait))
 	ws.SetPongHandler(func(string) error {
@@ -126,6 +127,8 @@ func runOnce(cfg Config) error {
 			c.finishAction(m.ID, c.scheduleInput(m.Session, m.Text, m.DelaySeconds, m.Repeat, m.IntervalSeconds), true)
 		case "cancel_schedule":
 			c.finishAction(m.ID, c.cancelSchedule(m.ScheduleID), true)
+		case "skip_schedule":
+			c.finishAction(m.ID, c.skipNextSchedule(m.ScheduleID), true)
 		case "host":
 			log.Printf("host label %s is used by another machine; this one is shown as %s (set its own with `portal host NAME`)", cfg.Host, m.Host)
 		case "status_color":
@@ -223,8 +226,8 @@ func (c *connection) publishSessions(done <-chan struct{}) {
 }
 
 func snapshotMessage(messageType string) protocol.Message {
-	names, infos := sessionInfos()
-	return protocol.Message{Type: messageType, Sessions: names, SessionInfos: infos, Schedules: pendingSchedules()}
+	names, infos, outputs := sessionInfos()
+	return protocol.Message{Type: messageType, Sessions: names, SessionInfos: infos, SessionOutputs: outputs, Schedules: pendingSchedules()}
 }
 
 func (c *connection) open(id, session string) {
@@ -416,6 +419,7 @@ func (c *connection) scheduleInput(session, text string, delaySeconds int64, rep
 		Repeat:          repeat,
 		IntervalSeconds: intervalSeconds,
 		Cancelable:      true,
+		Skippable:       true,
 	}
 	if err := c.saveSchedule(schedule); err != nil {
 		return err
@@ -430,17 +434,21 @@ func (c *connection) scheduleInput(session, text string, delaySeconds int64, rep
 }
 
 func scheduleScript(option, pane, text string, delaySeconds int64, repeat int, intervalSeconds int64) string {
+	skipOption := option + "_skip"
 	return fmt.Sprintf(
-		"sleep %d; i=1; while [ $i -le %d ]; do test -n \"$(tmux show-options -gqv %s)\" || exit 0; tmux send-keys -t %s -l -- %s && sleep 0.2 && tmux send-keys -t %s Enter || break; i=$((i+1)); if [ $i -le %d ]; then sleep %d; fi; done; tmux set-option -gu %s",
+		"portal_send() { if command -v timeout >/dev/null 2>&1; then timeout 10 tmux send-keys \"$@\"; elif command -v gtimeout >/dev/null 2>&1; then gtimeout 10 tmux send-keys \"$@\"; else tmux send-keys \"$@\"; fi; }; sleep %d; i=1; while [ $i -le %d ]; do test -n \"$(tmux show-options -gqv %s)\" || exit 0; if test -n \"$(tmux show-options -gqv %s)\"; then tmux set-option -gu %s; else portal_send -t %s -l -- %s && sleep 0.2 && portal_send -t %s Enter || break; fi; i=$((i+1)); if [ $i -le %d ]; then sleep %d; fi; done; tmux set-option -gu %s; tmux set-option -gu %s",
 		delaySeconds,
 		repeat,
 		shellQuote(option),
+		shellQuote(skipOption),
+		shellQuote(skipOption),
 		shellQuote(pane),
 		shellQuote(text),
 		shellQuote(pane),
 		repeat,
 		intervalSeconds,
 		shellQuote(option),
+		shellQuote(skipOption),
 	)
 }
 
@@ -458,6 +466,7 @@ func (c *connection) cancelSchedule(id string) error {
 	if out, err := exec.Command("tmux", "set-option", "-gu", option).CombinedOutput(); err != nil {
 		return fmt.Errorf("cancel scheduled message: %s", commandError(err, out))
 	}
+	_ = exec.Command("tmux", "set-option", "-gu", scheduleSkipOption(id)).Run()
 	ids := scheduleIDs()
 	kept := ids[:0]
 	for _, existing := range ids {
@@ -466,6 +475,30 @@ func (c *connection) cancelSchedule(id string) error {
 		}
 	}
 	return writeScheduleIDs(kept)
+}
+
+func (c *connection) skipNextSchedule(id string) error {
+	if !validScheduleID(id) {
+		return errors.New("invalid schedule ID")
+	}
+	c.scheduleMu.Lock()
+	defer c.scheduleMu.Unlock()
+	raw, err := exec.Command("tmux", "show-options", "-gqv", scheduleOption(id)).Output()
+	if err != nil || strings.TrimSpace(string(raw)) == "" {
+		return errors.New("scheduled message not found")
+	}
+	var schedule protocol.Schedule
+	if json.Unmarshal([]byte(strings.TrimSpace(string(raw))), &schedule) != nil || !schedule.Skippable {
+		return errors.New("scheduled message predates skip support")
+	}
+	skipOption := scheduleSkipOption(id)
+	if raw, _ := exec.Command("tmux", "show-options", "-gqv", skipOption).Output(); strings.TrimSpace(string(raw)) != "" {
+		return errors.New("next occurrence is already skipped")
+	}
+	if out, err := exec.Command("tmux", "set-option", "-g", skipOption, "1").CombinedOutput(); err != nil {
+		return fmt.Errorf("skip next scheduled message: %s", commandError(err, out))
+	}
+	return nil
 }
 
 func (c *connection) saveSchedule(schedule protocol.Schedule) error {
@@ -564,10 +597,10 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
-func sessionInfos() ([]string, []protocol.Session) {
+func sessionInfos() ([]string, []protocol.Session, map[string]string) {
 	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}\t#{@portal}\t#{session_created}").Output()
 	if err != nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	managed := map[string]bool{}
 	created := map[string]int64{}
@@ -600,6 +633,7 @@ func sessionInfos() ([]string, []protocol.Session) {
 		}
 	}
 	var infos []protocol.Session
+	outputs := make(map[string]string, len(names))
 	now := time.Now()
 	for _, name := range names {
 		screen, err := exec.Command("tmux", "capture-pane", "-p", "-t", SessionTarget(name)).Output()
@@ -608,12 +642,61 @@ func sessionInfos() ([]string, []protocol.Session) {
 			continue
 		}
 		changed, state := screens.observe(name, string(screen), size[name], activity[name], now)
-		infos = append(infos, protocol.Session{Session: name, LastActivity: changed, State: state, Created: created[name]})
+		infos = append(infos, protocol.Session{Session: name, LastActivity: changed, State: state, Created: created[name], CodexResetAt: screens.codexReset(name, string(screen), now)})
+		if clean := anonymizeTerminalOutput(string(screen)); clean != "" {
+			outputs[name] = clean
+		}
 	}
 	screens.prune(names)
 	sort.Strings(names)
 	sort.Slice(infos, func(i, j int) bool { return infos[i].Session < infos[j].Session })
-	return names, infos
+	return names, infos, outputs
+}
+
+const maxDecisionOutputBytes = 8 << 10
+
+var (
+	ansiPattern         = regexp.MustCompile(`\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))`)
+	secretPattern       = regexp.MustCompile(`(?i)\b(?:sk-(?:or-)?[a-z0-9_-]{12,}|gh[opusr]_[a-z0-9]{12,}|(?:bearer|token|password|secret|api[_-]?key)\s*[:=]\s*[^\s]+)`)
+	emailPattern        = regexp.MustCompile(`\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b`)
+	identityPattern     = regexp.MustCompile(`\b[A-Za-z0-9._-]+@[A-Za-z0-9._-]+\b`)
+	ipv4Pattern         = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
+	urlPattern          = regexp.MustCompile(`(?i)\bhttps?://[^\s'"<>]+`)
+	windowsPathPattern  = regexp.MustCompile(`(?i)\b[A-Z]:\\(?:[^\s<>:"|?*]+\\?)+`)
+	unixPathPattern     = regexp.MustCompile(`(^|[\s'"(=:])/(?:[^\s'"<>|]+/)*[^\s'"<>|]*`)
+	relativePathPattern = regexp.MustCompile(`\b(?:[A-Za-z0-9._-]+/)+[A-Za-z0-9._-]+\b`)
+)
+
+// anonymizeTerminalOutput removes control sequences and common identifiers
+// before terminal text leaves its host for a Decisions API request.
+func anonymizeTerminalOutput(screen string) string {
+	clean := ansiPattern.ReplaceAllString(screen, "")
+	clean = secretPattern.ReplaceAllString(clean, "<SECRET>")
+	clean = emailPattern.ReplaceAllString(clean, "<EMAIL>")
+	clean = identityPattern.ReplaceAllString(clean, "<IDENTITY>")
+	clean = ipv4Pattern.ReplaceAllString(clean, "<IP>")
+	clean = urlPattern.ReplaceAllString(clean, "<URL>")
+	clean = windowsPathPattern.ReplaceAllString(clean, "<PATH>")
+	clean = unixPathPattern.ReplaceAllStringFunc(clean, func(match string) string {
+		prefix := ""
+		if len(match) > 0 && match[0] != '/' {
+			prefix = match[:1]
+		}
+		return prefix + "<PATH>"
+	})
+	clean = relativePathPattern.ReplaceAllString(clean, "<PATH>")
+	lines := strings.Split(clean, "\n")
+	if len(lines) > 80 {
+		lines = lines[len(lines)-80:]
+	}
+	clean = strings.TrimSpace(strings.Join(lines, "\n"))
+	if len(clean) > maxDecisionOutputBytes {
+		clean = clean[len(clean)-maxDecisionOutputBytes:]
+		if i := strings.IndexByte(clean, '\n'); i >= 0 {
+			clean = clean[i+1:]
+		}
+	}
+	return strings.TrimSpace(clean)
 }
 
 // workingWindow is how long after its last visible change a screen still
@@ -639,11 +722,13 @@ type screenTracker struct {
 }
 
 type screenState struct {
-	sum     [sha256.Size]byte
-	last    [sha256.Size]byte // the screen before sum
-	size    string
-	resized time.Time
-	changed int64
+	resetText string
+	resetAt   int64
+	sum       [sha256.Size]byte
+	last      [sha256.Size]byte // the screen before sum
+	size      string
+	resized   time.Time
+	changed   int64
 }
 
 // resizeSettle is how long after a resize screen changes are put down to
@@ -712,6 +797,10 @@ func waitingForInput(screen string) bool {
 
 func scheduleOption(id string) string {
 	return "@portal_schedule_" + id
+}
+
+func scheduleSkipOption(id string) string {
+	return scheduleOption(id) + "_skip"
 }
 
 func validScheduleID(id string) bool {
@@ -783,9 +872,14 @@ func pendingSchedules() []protocol.Schedule {
 		current, paneErr := exec.Command("tmux", "display-message", "-p", "-t", schedule.Pane, "#{session_name}").Output()
 		if paneErr != nil {
 			_ = exec.Command("tmux", "set-option", "-gu", option).Run()
+			_ = exec.Command("tmux", "set-option", "-gu", scheduleSkipOption(id)).Run()
 			continue
 		}
 		schedule.Session = strings.TrimSpace(string(current))
+		if schedule.Skippable {
+			skip, _ := exec.Command("tmux", "show-options", "-gqv", scheduleSkipOption(id)).Output()
+			schedule.SkipNext = strings.TrimSpace(string(skip)) != ""
+		}
 		live = append(live, id)
 		schedules = append(schedules, schedule)
 	}
@@ -802,7 +896,7 @@ func pendingSchedules() []protocol.Schedule {
 }
 
 func Sessions() []string {
-	names, _ := sessionInfos()
+	names, _, _ := sessionInfos()
 	return names
 }
 

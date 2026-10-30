@@ -91,3 +91,33 @@ func TestScreenTrackerIgnoresResizes(t *testing.T) {
 		t.Fatalf("output after resize = %d %q, want 1025 working", changed, state)
 	}
 }
+
+func TestAnonymizeTerminalOutput(t *testing.T) {
+	input := "\x1b[32mDone\x1b[0m /home/alice/project/main.go\n" +
+		"changed internal/hub/jev.go on alice@buildbox\n" +
+		"contact alice@example.com from 192.168.1.9\n" +
+		"see https://private.example/jobs/123\n" +
+		"Authorization: Bearer sk-or-v1-supersecretvalue\n"
+	got := anonymizeTerminalOutput(input)
+	for _, private := range []string{"/home/alice", "internal/hub", "alice@buildbox", "alice@example.com", "192.168.1.9", "private.example", "supersecretvalue", "\x1b"} {
+		if strings.Contains(got, private) {
+			t.Fatalf("anonymized output still contains %q: %q", private, got)
+		}
+	}
+	for _, marker := range []string{"<PATH>", "<IDENTITY>", "<EMAIL>", "<IP>", "<URL>", "<SECRET>"} {
+		if !strings.Contains(got, marker) {
+			t.Fatalf("anonymized output missing %q: %q", marker, got)
+		}
+	}
+}
+
+func TestAnonymizeTerminalOutputKeepsOnlyRecentBoundedText(t *testing.T) {
+	lines := make([]string, 100)
+	for i := range lines {
+		lines[i] = strings.Repeat("x", 200)
+	}
+	got := anonymizeTerminalOutput(strings.Join(lines, "\n"))
+	if len(got) > maxDecisionOutputBytes {
+		t.Fatalf("anonymized output has %d bytes, want at most %d", len(got), maxDecisionOutputBytes)
+	}
+}

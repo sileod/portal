@@ -36,17 +36,19 @@ const (
 )
 
 type agentConn struct {
-	host         string
-	machine      string
-	ws           *websocket.Conn
-	writeMu      sync.Mutex
-	sessions     []string
-	sessionInfos []protocol.Session
-	schedules    []protocol.Schedule
-	gpus         []protocol.GPU
-	quotas       map[string]protocol.QuotaResult
-	capabilities []string
-	version      string
+	host           string
+	machine        string
+	ws             *websocket.Conn
+	writeMu        sync.Mutex
+	sessions       []string
+	sessionInfos   []protocol.Session
+	sessionOutputs map[string]string
+	schedules      []protocol.Schedule
+	gpus           []protocol.GPU
+	funnels        []protocol.Funnel
+	quotas         map[string]protocol.QuotaResult
+	capabilities   []string
+	version        string
 }
 
 type browserFrame struct {
@@ -157,6 +159,7 @@ type Server struct {
 	sessionPath string
 
 	notify *notifier
+	jev    *jevClassifier
 
 	upgrader websocket.Upgrader
 
@@ -169,7 +172,7 @@ type Server struct {
 }
 
 func New(passwordHash, agentToken string) *Server {
-	return &Server{
+	s := &Server{
 		passwordHash: passwordHash,
 		agentToken:   agentToken,
 		agents:       map[string]*agentConn{},
@@ -183,6 +186,8 @@ func New(passwordHash, agentToken string) *Server {
 		pongWait:     protocol.PongWait,
 		browserQueue: 1024,
 	}
+	s.jev = newJevClassifier(s.notify.jevEnabled, s.applyJevResult)
+	return s
 }
 
 func (s *Server) Run(addr string) error {
@@ -593,10 +598,14 @@ func (s *Server) handleSessions(w http.ResponseWriter, _ *http.Request) {
 	hosts := make([]string, 0, len(s.agents))
 	hostVersions := make(map[string]string, len(s.agents))
 	hostGPUs := make(map[string][]protocol.GPU, len(s.agents))
+	hostFunnels := make(map[string][]protocol.Funnel, len(s.agents))
 	hostQuotas := make(map[string]map[string]protocol.QuotaResult, len(s.agents))
 	for host, a := range s.agents {
 		hosts = append(hosts, host)
 		hostVersions[host] = a.version
+		if len(a.funnels) > 0 {
+			hostFunnels[host] = append([]protocol.Funnel(nil), a.funnels...)
+		}
 		if len(a.gpus) > 0 {
 			hostGPUs[host] = append([]protocol.GPU(nil), a.gpus...)
 		}
@@ -643,6 +652,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, _ *http.Request) {
 		HostVersions: hostVersions,
 		HostGPUs:     hostGPUs,
 		HostQuotas:   hostQuotas,
+		HostFunnels:  hostFunnels,
 		Sessions:     list,
 		Schedules:    schedules,
 	})
@@ -763,6 +773,43 @@ func (s *Server) handleSessionAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.callAgent(a, protocol.Message{Type: "cancel_schedule", ScheduleID: req.ScheduleID}); err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		writeOK(w)
+		return
+	}
+	if req.Action == "skip_schedule" {
+		if !validScheduleID(req.ScheduleID) {
+			http.Error(w, "invalid schedule ID", http.StatusBadRequest)
+			return
+		}
+		s.mu.RLock()
+		found := false
+		skippable := false
+		alreadySkipped := false
+		for _, schedule := range a.schedules {
+			if schedule.ID == req.ScheduleID {
+				found = true
+				skippable = schedule.Skippable
+				alreadySkipped = schedule.SkipNext
+				break
+			}
+		}
+		s.mu.RUnlock()
+		if !found {
+			http.Error(w, "scheduled message not found", http.StatusNotFound)
+			return
+		}
+		if !skippable {
+			http.Error(w, "this message predates skip support; recreate it after updating Portal", http.StatusConflict)
+			return
+		}
+		if alreadySkipped {
+			http.Error(w, "next occurrence is already skipped", http.StatusConflict)
+			return
+		}
+		if err := s.callAgent(a, protocol.Message{Type: "skip_schedule", ScheduleID: req.ScheduleID}); err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
@@ -924,9 +971,71 @@ func hasCapability(a *agentConn, capability string) bool {
 }
 
 func applyAgentSnapshot(a *agentConn, m protocol.Message) {
+	previous := make(map[string]protocol.Session, len(a.sessionInfos))
+	for _, session := range a.sessionInfos {
+		previous[session.Session] = session
+	}
 	a.sessions = append([]string(nil), m.Sessions...)
 	a.sessionInfos = append([]protocol.Session(nil), m.SessionInfos...)
+	for i := range a.sessionInfos {
+		name := a.sessionInfos[i].Session
+		if old, ok := previous[name]; ok && a.sessionOutputs[name] == m.SessionOutputs[name] {
+			a.sessionInfos[i].JevState = old.JevState
+			a.sessionInfos[i].JevConfidence = old.JevConfidence
+		}
+	}
+	a.sessionOutputs = make(map[string]string, len(m.SessionOutputs))
+	for session, output := range m.SessionOutputs {
+		a.sessionOutputs[session] = output
+	}
 	a.schedules = append([]protocol.Schedule(nil), m.Schedules...)
+}
+
+func (s *Server) applyJevResult(job jevJob, result jevResult) {
+	s.mu.Lock()
+	a := s.agents[job.host]
+	if a == nil || a.sessionOutputs[job.session] != job.output {
+		s.mu.Unlock()
+		return
+	}
+	for i := range a.sessionInfos {
+		if a.sessionInfos[i].Session == job.session {
+			a.sessionInfos[i].JevState = result.State
+			a.sessionInfos[i].JevConfidence = result.Confidence
+			break
+		}
+	}
+	snapshot := append([]protocol.Session(nil), a.sessionInfos...)
+	s.mu.Unlock()
+	log.Printf("jev: %s:%s = %s (confidence %.3f, model %s)", job.host, job.session, result.State, result.Confidence, result.Model)
+	s.notify.observe(job.host, snapshot)
+}
+
+func (s *Server) jevInputs(a *agentConn) (string, map[string]string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	host := a.host
+	outputs := make(map[string]string, len(a.sessionOutputs))
+	for session, output := range a.sessionOutputs {
+		outputs[session] = output
+	}
+	return host, outputs
+}
+
+func (s *Server) observeJev(a *agentConn) {
+	if s.jev == nil {
+		return
+	}
+	host, outputs := s.jevInputs(a)
+	s.jev.observe(host, outputs)
+}
+
+func (s *Server) primeJev(a *agentConn) {
+	if s.jev == nil {
+		return
+	}
+	host, outputs := s.jevInputs(a)
+	s.jev.prime(host, outputs)
 }
 
 func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
@@ -971,6 +1080,7 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("host connected: %s", a.host)
 	s.notify.observe(a.host, a.sessionInfos)
+	s.primeJev(a)
 	if old == nil {
 		s.notify.hostEvent(a.host, true)
 	}
@@ -991,12 +1101,15 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 		case "sessions":
 			s.mu.Lock()
 			current := s.agents[a.host] == a
+			var snapshot []protocol.Session
 			if current {
 				applyAgentSnapshot(a, m)
+				snapshot = append([]protocol.Session(nil), a.sessionInfos...)
 			}
 			s.mu.Unlock()
 			if current {
-				s.notify.observe(a.host, m.SessionInfos)
+				s.notify.observe(a.host, snapshot)
+				s.observeJev(a)
 			}
 		case "gpus":
 			s.mu.Lock()
@@ -1005,6 +1118,12 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 					log.Printf("GPU telemetry available: %s (%d GPU(s))", a.host, len(m.GPUs))
 				}
 				a.gpus = append([]protocol.GPU(nil), m.GPUs...)
+			}
+			s.mu.Unlock()
+		case "funnels":
+			s.mu.Lock()
+			if s.agents[a.host] == a {
+				a.funnels = append([]protocol.Funnel(nil), m.Funnels...)
 			}
 			s.mu.Unlock()
 		case "quotas":

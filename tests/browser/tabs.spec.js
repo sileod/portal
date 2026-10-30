@@ -75,6 +75,22 @@ test('tab dots show which terminals need input, are working, or have news', asyn
   await expect(page).toHaveTitle('(1) Portal');
 });
 
+test('Jev decisions control circle colors and input count', async ({ page }) => {
+  await mockSessions(page, [
+    { session: 'flight', jev_state: 'inflight', jev_confidence: 0.91 },
+    { session: 'done', jev_state: 'done', jev_confidence: 0.88 },
+    { session: 'question', jev_state: 'input', jev_confidence: 0.97 },
+  ]);
+  await page.addInitScript(() => { localStorage.portalTabOrder = 'name'; });
+  await page.goto('/');
+  const dot = name => page.locator('.tabwrap', { hasText: name }).locator('.unread');
+  await expect(dot('flight')).toHaveClass(/inflight/);
+  await expect(dot('flight')).toHaveAttribute('title', /91% confidence/);
+  await expect(dot('done')).toHaveClass(/done/);
+  await expect(dot('question')).toHaveClass(/input/);
+  await expect(page).toHaveTitle('(1) Portal');
+});
+
 test('recent output is the default, with creation time breaking ties', async ({ page }) => {
   await mockSessions(page, [
     { session: 'older', created: 100, last_activity: 1000 },

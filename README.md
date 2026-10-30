@@ -27,6 +27,8 @@ The vertical tab bar shows available GPU memory for connected NVIDIA hosts with 
 
 When [Harness Link](https://github.com/sileod/harness-link) is installed on a host, Portal shows its `hlink quota --json` results, including available 5-hour and weekly windows, in a box at the bottom of the left tab bar and in that host's settings card. The Appearance settings can hide the sidebar quota box in this browser. Remaining quota windows refresh about every five minutes. Portal forwards quota summaries and availability errors to the hub, never harness credentials. Set `PORTAL_HLINK` on the host daemon if its `hlink` executable is outside the daemon's PATH.
 
+Existing public Tailscale Funnel HTTPS routes appear in a full **Hosted apps** tab, with its navigation button below Harness quotas. Routes are grouped by machine. Click a route to open its GUI in a new tab. Hosts discover routes locally every minute using `tailscale funnel status --json`; discovery does not change Funnel configuration. Update the hub and hosts to enable this. Machines without readable Tailscale configuration contribute no links.
+
 ## Use
 
 ```bash
@@ -93,17 +95,25 @@ Portal stays intentionally small and terminal-first.
 - normal Windows/Linux Ctrl+V and macOS Cmd+V paste handling
 - streamed output keeps the viewport pinned while you are reviewing older scrollback
 - colored tab dots: orange when a terminal shows a prompt waiting for you (agent approvals, `[y/N]`, …; the page title counts them), green while its screen is changing, blue for new output since you last looked
+- optional Jev decisions through OpenRouter classify settled terminal output as in flight (green), done (violet), or needing input (pulsing orange); Portal waits for 10 seconds of quiet, deduplicates unchanged screens, and does not sweep sessions on restart or retry errors automatically; it strips ANSI data and anonymizes paths, email addresses, IP addresses, and common secret formats before sending a bounded recent excerpt, and Jev mode limits automatic ntfy notifications to needs-input decisions
 - last activity time based on real screen changes, so idle TUIs that redraw do not look busy
 - phone notifications through [ntfy](https://ntfy.sh): set a topic in the Portal page and pick events (a terminal needs input, finished a run of at least N seconds, stayed idle N minutes after one, or a machine dropped/returned); the hub sends them itself, so no browser has to stay open, and each one links back to its terminal
 - tab ordering by recent output (the default), newest first, last used, name, or a manual order you set by dragging tabs; the ⇅ button cycles through them, plus a one-click mark-all-read control
 - schedule arbitrary text + Enter for later
+- when a terminal shows a Codex usage-limit retry time, the schedule button suggests `proceed` one minute after that reset; the delay stays editable and you confirm before queuing it
 - repeat a scheduled send at an interval
 - see pending schedules on the session and in the Portal tab
 - cancel scheduled sends created by cancellation-aware Portal versions
 - update Portal on any connected host from the Portal settings page
 - see the running hub and host versions in Portal settings
-- light/dark/system theme
+- light/dark/system theme shared by terminals, sidebar, and settings
+- phone layout with full-width terminals and a collapsible navigation drawer; desktop tab layouts stay available
 - configurable tab width and tmux status-bar color
+
+Jev requires `OPENROUTER_API_KEY` in the hub process environment. Enable it in
+the Notifications settings, or set `PORTAL_JEV=1` for one hub start to enable
+and persist it. Portal pins the decision model version so a moving alias cannot
+silently change the three-way classification.
 
 A scheduled send is harness-agnostic. For example, schedule `proceed` in `5h`, optionally repeated every `10m`.
 

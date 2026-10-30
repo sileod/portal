@@ -111,6 +111,22 @@ func TestNotifierHostsOnlyAnnouncesReturn(t *testing.T) {
 	waitSent(t, sent, "box disconnected", "box connected")
 }
 
+func TestNotifierJevOnlySendsNeedsInput(t *testing.T) {
+	c := defaultNotifyConfig()
+	c.Topic = "t"
+	c.Jev = true
+	c.Finished, c.Idle, c.Hosts = true, true, true
+	n, sent, clock := testNotifier(c)
+	n.observe("box", []protocol.Session{{Session: "agent"}})
+	n.observe("box", []protocol.Session{{Session: "agent", JevState: "inflight"}})
+	*clock = clock.Add(time.Hour)
+	n.observe("box", []protocol.Session{{Session: "agent", JevState: "done"}})
+	n.hostEvent("box", false)
+	n.tick()
+	n.observe("box", []protocol.Session{{Session: "agent", JevState: "input"}})
+	waitSent(t, sent, "agent needs input")
+}
+
 func TestPostNtfy(t *testing.T) {
 	var got *http.Request
 	var body string
